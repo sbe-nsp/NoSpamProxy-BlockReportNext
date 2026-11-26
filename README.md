@@ -12,7 +12,8 @@
   <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.1.0">Release 0.1.0</a> ·
   <a href="#api-zugang-erstellen">API-Zugang erstellen</a> ·
   <a href="#installation">Installation</a> ·
-  <a href="#aufruf">Aufruf</a>
+  <a href="#aufruf">Aufruf</a> ·
+  <a href="#wöchentliche-ausführung-mit-der-aufgabenplanung">Aufgabenplanung</a>
 </p>
 
 ## API-Zugang erstellen
@@ -58,11 +59,13 @@ Nach erfolgreicher Anmeldung diesen Befehl ausführen:
 $reportKey = New-NspApiKey -Name "NoSpamProxy-BlockReport" -Permissions "read:messageTracking","read:ownedDomains"
 ```
 
-Der Name muss für dein Benutzerkonto eindeutig sein. Falls bereits ein Schlüssel mit diesem Namen existiert, wähle einen anderen Namen. Der Tokenwert wird nur bei der Erstellung zurückgegeben. Wenn du ihn später erneut benötigst, kannst du ihn im aktuellen Fenster mit dem folgenden Befehl anzeigen und unmittelbar in einem geschützten Secret Store speichern:
+Der Name muss für dein Benutzerkonto eindeutig sein. Falls bereits ein Schlüssel mit diesem Namen existiert, wähle einen anderen Namen. Der Tokenwert wird nur bei der Erstellung zurückgegeben. Um den API-Schlüssel als Text auszugeben und beispielsweise für die Aufgabenplanung zu übernehmen, führe im selben Fenster aus:
 
 ```powershell
-$reportKey.Token
+Write-Output $reportKey.Token
 ```
+
+Kopiere den angezeigten Schlüssel direkt in einen geschützten Secret Store. Nach dem Schließen des Fensters kann der Tokenwert nicht erneut über NoSpamProxy abgerufen werden; bei Verlust muss ein neuer Schlüssel erstellt werden. Die [Anleitung zur Aufgabenplanung](#wöchentliche-ausführung-mit-der-aufgabenplanung) zeigt, wie ein gespeicherter Schlüssel für eine wöchentliche Ausführung bereitgestellt wird.
 
 Den Schlüssel für den Bericht in **demselben PowerShell-Fenster** bereitstellen:
 
@@ -186,6 +189,89 @@ HTML und PDF per SMTP versenden:
 
 Ersetze `https://nospamproxy.example.com` in den Beispielen durch die HTTPS-Basis-URL deiner NoSpamProxy-Service-API. Die Empfänger werden als BCC eingetragen. Beim Versand muss mindestens ein SMTP-Relay und ein Empfänger angegeben werden. Die voreingestellten Beispielwerte sind nicht produktiv verwendbar.
 
+## Wöchentliche Ausführung mit der Aufgabenplanung
+
+Dieses Beispiel versendet den Bericht einmal pro Woche per SMTP. Der Bericht vergleicht weiterhin zwei vollständige 14-Tage-Zeiträume; der wöchentliche Zeitplan ändert diese Zeiträume nicht.
+
+### 1. Voraussetzungen vorbereiten
+
+Entpacke das Anwenderpaket auf dem Windows-Computer, der den Bericht ausführen soll, beispielsweise nach `C:\Reports\NoSpamProxy-BlockReport`. Die drei Reportdateien müssen zusammen in diesem Verzeichnis bleiben. Der Computer benötigt Zugriff auf die eigene NoSpamProxy-Service-API und das SMTP-Relay.
+
+Falls Windows die heruntergeladenen Skripte aufgrund ihrer Internet-Herkunft blockiert, kannst du sie nach Prüfung des Pakets entsperren. Passe die Pfade bei Bedarf an:
+
+```powershell
+Unblock-File -Path 'C:\Reports\NoSpamProxy-BlockReport\Get-PermanentlyBlocked.ps1','C:\Reports\NoSpamProxy-BlockReport\ReportOData.ps1'
+```
+
+Wähle ein Windows-Konto für die Aufgabe. Dieses Konto benötigt Zugriff auf das Reportverzeichnis, die API und das SMTP-Relay. Die folgenden Schritte zum Speichern des Schlüssels müssen **auf demselben Computer und unter demselben Windows-Konto** ausgeführt werden, unter dem später die Aufgabe läuft. Das Benutzerprofil des Kontos muss beim Ausführen verfügbar sein.
+
+### 2. API-Schlüssel für das Aufgabenkonto speichern
+
+Melde dich als das gewählte Aufgabenkonto an und öffne **Windows PowerShell**. Mit `whoami` kannst du prüfen, welches Windows-Konto das Fenster ausführt. Falls noch kein Schlüssel vorhanden ist, erstelle ihn wie unter [API-Zugang erstellen](#api-zugang-erstellen) beschrieben.
+
+Erstelle ein Verzeichnis für die geschützte Schlüsseldatei. Dieses Beispiel verwendet `C:\ProgramData\NoSpamProxy-BlockReport`; passe den Pfad bei Bedarf an und stelle sicher, dass das Aufgabenkonto dort schreiben darf.
+
+```powershell
+New-Item -ItemType Directory -Force -Path 'C:\ProgramData\NoSpamProxy-BlockReport' | Out-Null
+```
+
+Gib anschließend den zuvor ausgegebenen API-Schlüssel ein. Die Eingabe wird nicht angezeigt:
+
+```powershell
+$securePat = Read-Host 'NoSpamProxy API-Schlüssel' -AsSecureString
+$securePat | Export-Clixml -LiteralPath 'C:\ProgramData\NoSpamProxy-BlockReport\api-key.xml'
+```
+
+Windows verschlüsselt den gespeicherten Wert für dieses Benutzerkonto auf diesem Computer. Ein anderes Konto oder ein anderer Computer kann diese Datei nicht verwenden; dort muss der Schlüssel unter dem jeweiligen Aufgabenkonto erneut gespeichert werden. Begrenze den Zugriff auf das Verzeichnis auf das Aufgabenkonto und die zuständigen Administratoren. Bei einem neuen oder abgelaufenen API-Schlüssel die Datei auf dieselbe Weise unter dem Aufgabenkonto erneut erstellen.
+
+### 3. Startskript anlegen
+
+Öffne Editor, kopiere den folgenden Inhalt hinein und speichere ihn als `C:\Reports\NoSpamProxy-BlockReport\Start-BlockReport.ps1`. Im Speicherdialog **Alle Dateien** als Dateityp auswählen, damit keine zusätzliche Endung `.txt` angehängt wird.
+
+Ersetze die Beispielpfade, die HTTPS-Basis-URL, das SMTP-Relay sowie Absender und Empfänger durch deine eigenen Werte. Der Pfad zu `api-key.xml` muss mit Schritt 2 übereinstimmen.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$securePat = Import-Clixml -LiteralPath 'C:\ProgramData\NoSpamProxy-BlockReport\api-key.xml'
+$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePat)
+try {
+    $env:NSP_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+    & 'C:\Reports\NoSpamProxy-BlockReport\Get-PermanentlyBlocked.ps1' `
+        -ODataBaseUrl 'https://nospamproxy.example.com' `
+        -SMTPHosts 'smtp-relay.example.local' `
+        -ReportSender 'nsp-report@example.local' `
+        -ReportRecipients 'admin@example.local' `
+        -ReportType Both
+}
+finally {
+    Remove-Item Env:\NSP_API_KEY -ErrorAction SilentlyContinue
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+}
+```
+
+Der Schlüssel steht nur während des Startskripts in der Prozessumgebung. Das Startskript selbst und die Aufgabenargumente enthalten keinen Tokenwert.
+
+### 4. Wöchentliche Aufgabe erstellen
+
+1. Öffne im Windows-Startmenü **Aufgabenplanung** und wähle rechts **Aufgabe erstellen**.
+2. Vergib auf **Allgemein** einen Namen, z. B. `NoSpamProxy BlockReport`. Wähle über **Benutzer oder Gruppe ändern** das Windows-Konto aus Schritt 2. Für einen unbeaufsichtigten Lauf wähle **Unabhängig von der Benutzeranmeldung ausführen** und speichere die Anmeldeinformationen, wenn Windows danach fragt.
+3. Öffne **Trigger**, klicke auf **Neu**, wähle **Wöchentlich** und lege Wochentag und Uhrzeit fest. Bestätige mit **OK**.
+4. Öffne **Aktionen**, klicke auf **Neu** und wähle **Programm starten**:
+   - **Programm/Skript:** `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+   - **Argumente hinzufügen:** `-NoProfile -ExecutionPolicy RemoteSigned -File "C:\Reports\NoSpamProxy-BlockReport\Start-BlockReport.ps1"`
+   - Ersetze den Pfad zum Startskript, falls du es anders gespeichert hast.
+5. Überprüfe unter **Bedingungen**, ob die Einstellungen für den Computer passen, und speichere die Aufgabe mit **OK**.
+
+Die Ausführung von PowerShell-Skripten muss durch die Richtlinien des Computers erlaubt sein. Bei einer Sperre durch Gruppenrichtlinien oder fehlendem Recht **Anmelden als Stapelverarbeitungsauftrag** hilft die Windows-Administration.
+
+### 5. Aufgabe prüfen
+
+Wähle die Aufgabe in der Aufgabenplanungsbibliothek aus und klicke auf **Ausführen**. Dieser Probelauf versendet den Bericht bereits per E-Mail. Prüfe anschließend **Ergebnis der letzten Ausführung**: `0x0` bedeutet, dass der PowerShell-Prozess erfolgreich beendet wurde. Kontrolliere zusätzlich den Posteingang. Bei Fehlern helfen der Aufgabenverlauf und ein manueller Aufruf des Startskripts unter dem Aufgabenkonto.
+
+```powershell
+& 'C:\Reports\NoSpamProxy-BlockReport\Start-BlockReport.ps1'
+```
+
 ## Parameter
 
 | Parameter | Standard | Bedeutung |
@@ -200,7 +286,7 @@ Ersetze `https://nospamproxy.example.com` in den Beispielen durch die HTTPS-Basi
 | `-OutputPath` | nicht gesetzt | Zieldatei für HTML; nur zusammen mit `-NoSend` zulässig und dann erforderlich. |
 | `-Help` | aus | Zeigt die ausführliche Hilfe ohne API-Aufruf oder E-Mail-Versand. |
 
-Für geplante Ausführungen müssen die eigene OData-Basis-URL und die SMTP-Parameter angegeben sowie `NSP_API_KEY` im Prozess der geplanten Ausführung sicher bereitgestellt werden; eine temporär in einer interaktiven PowerShell gesetzte Variable reicht dafür nicht aus.
+Für geplante Ausführungen müssen die eigene OData-Basis-URL und die SMTP-Parameter angegeben sowie `NSP_API_KEY` im Prozess der geplanten Ausführung sicher bereitgestellt werden; eine temporär in einer interaktiven PowerShell gesetzte Variable reicht dafür nicht aus. Ein vollständiges Beispiel steht unter [Wöchentliche Ausführung mit der Aufgabenplanung](#wöchentliche-ausführung-mit-der-aufgabenplanung).
 
 ## Grenzen der API-Daten
 

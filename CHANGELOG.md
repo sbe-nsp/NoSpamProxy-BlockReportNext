@@ -7,3 +7,8 @@
 - Die eigene HTTPS-Basis-URL ist mit `-ODataBaseUrl` anzugeben; der PAT wird über `NSP_API_KEY` bereitgestellt.
 - Die Projektvorschau enthält ausschließlich fiktive Beispieldaten.
 - Das Anwenderpaket und die automatisch erzeugten Quellarchive enthalten die drei benötigten Reportdateien und die README.
+
+### Dokumentation aktualisiert - 2026-11-26
+- Schritt-für-Schritt-Anleitung zum Erstellen eines API-Schlüssels mit den benötigten Leserechten und zur Ausgabe des Tokenwerts ergänzt.
+- Einrichtung einer wöchentlichen Windows-Aufgabe mit geschützter Schlüsseldatei und SMTP-Versand beschrieben.
+- Das Anwenderpaket enthält die aktualisierte README; die automatisch erzeugten Quellarchive zeigen weiterhin den ursprünglichen Release-Tag.
