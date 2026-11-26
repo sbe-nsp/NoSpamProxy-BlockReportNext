@@ -1,6 +1,18 @@
-# NoSpamProxy BlockReport
+# NoSpamProxy BlockReport Next
 
-PowerShell-Bericht für NoSpamProxy. Alle Report-Daten werden lesend über die NoSpamProxy-OData-Service-API abgerufen. SQL ist keine Datenquelle und es gibt keinen SQL-Fallback.
+**Ein kompakter PowerShell-Analysebericht für NoSpamProxy.** Alle Daten werden lesend über die OData-Service-API abgerufen – ohne SQL-Zugriff.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.1.0/docs/report-preview.png" alt="Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <br>
+  <sub>Berichtsvorschau mit fiktiven Beispieldaten.</sub>
+</p>
+
+<p align="center">
+  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.1.0">Release 0.1.0</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#aufruf">Aufruf</a>
+</p>
 
 ## Berichtsumfang
 
@@ -34,7 +46,7 @@ Die Zeitfilter sind UTC: aktueller Zeitraum `[heute-14 Tage, heute)`, Vergleichs
 
 ## Installation
 
-Das [Repository](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext) über **Code > Download ZIP** herunterladen und entpacken. Es enthält nur `Get-PermanentlyBlocked.ps1`, `ReportOData.ps1`, `template.html` und diese README.
+Das [Anwenderpaket](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.1.0/NoSpamProxy-BlockReportNext-v0.1.0-build20261126.5.zip) herunterladen und entpacken. Es enthält nur `Get-PermanentlyBlocked.ps1`, `ReportOData.ps1`, `template.html` und diese README.
 
 Alternativ den `master`-Branch klonen:
 
@@ -125,4 +137,4 @@ Die API wird ausschließlich mit GET-Abfragen verwendet. API-Antworten und Empf�
 
 ## Version
 
-Die Skriptversion einschließlich Build und Datum ist im Berichtskopf sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt.
+Die Skriptversion einschließlich Build und Datum ist im Berichtskopf sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.1.0).

@@ -67,7 +67,7 @@ if ($Help) {
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
-$reportVersion = "1.5.1 (Build 20261126.4, 2026-11-26)"
+$reportVersion = "0.1.0 (Build 20261126.5, 2026-11-26)"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Web
 . (Join-Path $PSScriptRoot "ReportOData.ps1")
