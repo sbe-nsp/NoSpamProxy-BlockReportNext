@@ -10,9 +10,89 @@
 
 <p align="center">
   <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.1.0">Release 0.1.0</a> ·
+  <a href="#api-zugang-erstellen">API-Zugang erstellen</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#aufruf">Aufruf</a>
 </p>
+
+## API-Zugang erstellen
+
+Der Bericht benötigt einen NoSpamProxy-API-Schlüssel, auch Personal Access Token (PAT) genannt, mit genau zwei Leserechten:
+
+- `read:messageTracking` für die Nachrichtentracking-Daten einschließlich URL Safeguard.
+- `read:ownedDomains` für die eigenen Domains und die Auswertung interner Empfänger.
+
+`manage`-Rechte sind für den Bericht nicht erforderlich. Zum **Erstellen** des Schlüssels benötigst du ein NoSpamProxy-Benutzerkonto, das API-Schlüssel erstellen darf.
+
+### 1. PowerShell öffnen
+
+Melde dich an einem NoSpamProxy-System an, auf dem das NoSpamProxy-PowerShell-Modul installiert und eingerichtet ist. Öffne über das Windows-Startmenü **Windows PowerShell**. Gib die folgenden Befehle in diesem Fenster ein und bestätige jeden Befehl mit **Enter**. Das Fenster während der Einrichtung geöffnet lassen.
+
+### 2. NoSpamProxy-Modul laden
+
+```powershell
+Import-Module NoSpamProxy
+```
+
+Wird das Modul nicht gefunden, muss es zuerst auf diesem System verfügbar gemacht werden; wende dich dazu an die NoSpamProxy-Administration.
+
+### 3. Mit NoSpamProxy verbinden
+
+```powershell
+Connect-Nsp -Credential (Get-Credential)
+```
+
+Im Anmeldefenster den Benutzernamen und das Passwort des NoSpamProxy-Kontos eingeben und bestätigen. Wenn die Verbindung wegen eines nicht vertrauenswürdigen Serverzertifikats fehlschlägt, kann in einer Testumgebung alternativ folgender Befehl verwendet werden:
+
+```powershell
+Connect-Nsp -IgnoreServerCertificateErrors -Credential (Get-Credential)
+```
+
+Der Schalter überspringt die Zertifikatsprüfung; für produktive Umgebungen sollte stattdessen ein vertrauenswürdiges Zertifikat verwendet werden.
+
+### 4. API-Schlüssel erstellen und bereitstellen
+
+Nach erfolgreicher Anmeldung diesen Befehl ausführen:
+
+```powershell
+$reportKey = New-NspApiKey -Name "NoSpamProxy-BlockReport" -Permissions "read:messageTracking","read:ownedDomains"
+```
+
+Der Name muss für dein Benutzerkonto eindeutig sein. Falls bereits ein Schlüssel mit diesem Namen existiert, wähle einen anderen Namen. Der Tokenwert wird nur bei der Erstellung zurückgegeben. Wenn du ihn später erneut benötigst, kannst du ihn im aktuellen Fenster mit dem folgenden Befehl anzeigen und unmittelbar in einem geschützten Secret Store speichern:
+
+```powershell
+$reportKey.Token
+```
+
+Den Schlüssel für den Bericht in **demselben PowerShell-Fenster** bereitstellen:
+
+```powershell
+$env:NSP_API_KEY = $reportKey.Token
+```
+
+Die Variable gilt nur für dieses PowerShell-Fenster. Nach dem Schließen muss der Schlüssel für einen erneuten Aufruf wieder bereitgestellt werden. Wie ein bereits vorhandener Schlüssel eingegeben wird, steht unter [Zugangsdaten](#zugangsdaten).
+
+### 5. Bericht ausprobieren
+
+Das [Anwenderpaket installieren](#installation), falls noch nicht geschehen. Im selben PowerShell-Fenster in das entpackte Verzeichnis wechseln. Den Beispielpfad durch den tatsächlichen Pfad ersetzen:
+
+```powershell
+Set-Location 'C:\Pfad\zum\NoSpamProxy-BlockReport'
+```
+
+Die eigene HTTPS-Basis-URL der NoSpamProxy-Service-API eingeben und den Bericht ohne E-Mail-Versand erstellen:
+
+```powershell
+$odataBaseUrl = Read-Host 'HTTPS-Basis-URL der eigenen NoSpamProxy-Service-API'
+$outputPath = Join-Path $env:TEMP ("NoSpamProxy-Report-{0}.html" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl $odataBaseUrl -NoSend -ReportType HTML -OutputPath $outputPath
+```
+
+Nach erfolgreichem Abschluss zeigt PowerShell den Speicherort der HTML-Datei an. Mit diesem Befehl lässt sich der Bericht im Browser öffnen:
+
+```powershell
+Start-Process $outputPath
+```
 
 ## Berichtsumfang
 
@@ -38,7 +118,7 @@ Die Zeitfilter sind UTC: aktueller Zeitraum `[heute-14 Tage, heute)`, Vergleichs
 
 - Windows und PowerShell 5.1 oder neuer.
 - HTTPS-Zugriff auf die NoSpamProxy-Service-API und die eigene Basis-URL.
-- Ein PAT mit Leserechten auf die benötigten Tracking- und Konfigurationsentitäten.
+- Ein PAT mit `read:messageTracking` und `read:ownedDomains`.
 - Für PDF-Ausgabe: Microsoft Edge. Ohne Edge wird beim Versand HTML als Fallback verwendet.
 - Für den Versand: erreichbarer SMTP-Relay auf Port 25, gültiger Absender und Empfänger.
 - `template.html` und `ReportOData.ps1` im selben Verzeichnis wie `Get-PermanentlyBlocked.ps1`.
@@ -55,13 +135,13 @@ git clone --branch master https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext
 Set-Location .\NoSpamProxy-BlockReportNext
 ```
 
-Die Dateien im Projektverzeichnis zusammen belassen. Danach den PAT wie unten beschrieben bereitstellen und den Bericht zunächst mit `-NoSend` prüfen. Für den GitHub-Zugriff sind entsprechende Repository-Berechtigungen nötig.
+Die Dateien im Projektverzeichnis zusammen belassen. Danach den PAT wie unter [API-Zugang erstellen](#api-zugang-erstellen) beschrieben bereitstellen und den Bericht zunächst mit `-NoSend` prüfen.
 
 ## Zugangsdaten
 
 Der PAT wird ausschließlich aus der Prozess-Umgebungsvariable `NSP_API_KEY` gelesen. Lege ihn nicht in Skriptdateien, Aufgabenargumenten, PowerShell-History, Logs oder Git ab. Für geplante Ausführungen sollte ein geschützter Secret Store den Wert zur Laufzeit in die Umgebung des Prozesses laden.
 
-Für einen interaktiven Test kann der PAT verdeckt abgefragt werden:
+Wenn bereits ein PAT vorhanden ist, kann er für einen interaktiven Test verdeckt abgefragt werden:
 
 ```powershell
 $odataBaseUrl = Read-Host 'HTTPS-Basis-URL der eigenen NoSpamProxy-Service-API'
