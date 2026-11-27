@@ -1,3 +1,15 @@
+## [0.2.0] - Build 20261127.1 - 2026-11-27
+
+### Neu
+- MIME-Typen im HTML-Bericht einzeln auf- und zuklappbar; die Details sind zunächst geschlossen und im PDF geöffnet.
+- Aktualisierte Berichtsvorschau mit ausschließlich fiktiven Beispieldaten.
+
+### Überarbeitet
+- Verständlichere Status-, Engine-, Filter-, Malware- und Recall-Bezeichnungen sowie eine Erläuterung der API-Blockierungsgründe.
+- Einheitliche Schriftfarbe für die Kennzahlen im Berichtskopf; doppelte Gesamtzahl und nicht benötigte Quarantäne- und Sandbox-Zeilen entfernt.
+- DeepFile-Werte bleiben fachlich korrekt als Analysevorgänge und Nachrichtentracks bezeichnet.
+- API-Zugang und wöchentliche Ausführung über die Windows-Aufgabenplanung sind in der README beschrieben.
+
 ## [0.1.0] - Build 20261126.5 - 2026-11-26
 
 ### Neu

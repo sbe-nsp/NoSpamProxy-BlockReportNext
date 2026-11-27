@@ -20,7 +20,6 @@
     .value{display:block;color:var(--blue);font-size:1.65rem;line-height:1.1;font-weight:700}
     .label{display:block;margin:3px 0;color:var(--muted);font-size:.77rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
     .metric small{color:var(--muted)}
-    .blocked .value{color:var(--red)}
     .panel{margin:0 0 8px;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:9px}
     .panel h2{margin:0 0 5px;padding-bottom:4px;border-bottom:1px solid var(--line);color:var(--blue);font-size:1.08rem}
     .table-wrap{width:100%;overflow-x:auto}
@@ -31,10 +30,13 @@
     .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:82px}
     .section td{padding-top:8px;color:var(--blue);font-weight:bold}
     .sub td:first-child{padding-left:18px}
+    .mime-details{margin-top:8px;border:1px solid var(--line);border-radius:6px}
+    .mime-details summary{padding:8px;cursor:pointer;font-weight:600;overflow-wrap:anywhere}
+    .mime-counts{color:var(--muted);font-size:.85rem;font-weight:400}
     .footnote{margin:8px 0 0;color:var(--muted);font-size:.8rem}
     @media(max-width:850px){.page{width:calc(100% - 20px);padding:8px 0}.metrics td{padding:7px 4px}.value{font-size:1.4rem}}
     @media(max-width:560px){.page{width:calc(100% - 16px);padding:6px 0}.header{align-items:flex-start;flex-wrap:wrap}.header-main{flex-wrap:wrap;gap:8px}.header h1{font-size:1.2rem}.logo{width:140px}.version{margin-left:auto}.metrics{border-spacing:3px 0}.metrics td{display:block;width:100%!important;margin-bottom:4px}.panel{padding:8px}.table-wrap table{min-width:620px}}
-    @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}html,body{background:#1f1f1f!important;color:#e7e7e7!important}.panel,.metric{background:#272727!important;border-color:#3b3b3b!important;box-shadow:none!important;break-inside:avoid}h1,h2,.value,.section td{color:#fff!important}th{background:#2c2c2c!important}.footnote,.period,.label,th{color:#a5a5a5!important}.blocked .value{color:#f05252!important}}
+    @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}html,body{background:#1f1f1f!important;color:#e7e7e7!important}.panel,.metric{background:#272727!important;border-color:#3b3b3b!important;box-shadow:none!important;break-inside:avoid}h1,h2,.value,.section td{color:#fff!important}th{background:#2c2c2c!important}.footnote,.period,.label,th{color:#a5a5a5!important}}
   </style>
 </head>
 <body>
