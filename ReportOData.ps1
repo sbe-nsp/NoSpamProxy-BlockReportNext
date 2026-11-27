@@ -223,7 +223,8 @@ function Get-NspODataItems {
     param(
         [Parameter(Mandatory = $true)][string] $Path,
         [System.Collections.IDictionary] $Query,
-        [ValidateRange(1, 500)][int] $PageSize = 500
+        [ValidateRange(1, 500)][int] $PageSize = 500,
+        [scriptblock] $PageHandler
     )
 
     $skip = [long]0
@@ -234,8 +235,8 @@ function Get-NspODataItems {
     $hasGroupBy = $Query -and $Query["`$apply"] -match "groupby\(\(([^)]+)\)"
     if ($hasGroupBy -and $Query["`$orderby"]) {
         $keys = @($Matches[1].Split(",") | ForEach-Object { $_.Trim() })
-        $orderKeys = @(([string]$Query["`$orderby"]).Split(",") | ForEach-Object { $_.Trim() })
-        if ($keys.Count -eq $orderKeys.Count -and -not (Compare-Object $keys $orderKeys)) {
+        $orderKeys = @(([string]$Query["`$orderby"]).Split(",") | ForEach-Object { $_.Trim() -replace "\s+(asc|desc)$", "" })
+        if (@($keys | Where-Object { $_ -notin $orderKeys }).Count -eq 0) {
             $groupKeys = $keys
         }
     }
@@ -277,7 +278,12 @@ function Get-NspODataItems {
                 throw "OData pagination for '$Path' repeated a page of ordered results."
             }
         }
-        foreach ($item in $pageItems) { Write-Output $item }
+        if ($PageHandler) {
+            if (& $PageHandler $pageItems) { return }
+        }
+        else {
+            $pageItems
+        }
         $skip += $pageItems.Count
 
         $nextLink = [string](Get-NspODataProperty $page "@odata.nextLink")
@@ -369,24 +375,27 @@ function Get-NspODataPathValue {
 }
 
 function Get-NspAggregateCount {
-    param([Parameter(Mandatory = $true)] $Row)
+    param(
+        [Parameter(Mandatory = $true)] $Row,
+        [string] $Name = "n"
+    )
 
-    $value = Get-NspODataProperty $Row "n"
+    $value = Get-NspODataProperty $Row $Name
     if ($null -eq $value) {
-        throw "OData aggregate row did not contain the required numeric count field n."
+        throw "OData aggregate row did not contain the required numeric count field $Name."
     }
     $count = [long]0
     if ($value -is [string]) {
         if (-not [long]::TryParse($value, [Globalization.NumberStyles]::Integer,
                 [Globalization.CultureInfo]::InvariantCulture, [ref]$count)) {
-            throw "OData aggregate field n was not an integer."
+            throw "OData aggregate field $Name was not an integer."
         }
     }
     else {
         try { $count = [long]$value }
-        catch { throw "OData aggregate field n was not an integer." }
+        catch { throw "OData aggregate field $Name was not an integer." }
     }
-    if ($count -lt 0) { throw "OData aggregate field n was negative." }
+    if ($count -lt 0) { throw "OData aggregate field $Name was negative." }
     return $count
 }
 
@@ -416,14 +425,13 @@ function Get-NspOperationRecords {
     $from = ConvertTo-NspODataDate $StartUtc
     $to = ConvertTo-NspODataDate $EndUtc
     $filter = "Operation/Type eq '$OperationType' and Created ge $from and Created lt $to"
-    $rows = Get-NspODataItems -Path "/api/message-tracking/MessageOperations" -PageSize 100 `
+    Get-NspODataItems -Path "/api/message-tracking/MessageOperations" -PageSize 500 `
         -Query @{
             "`$filter" = $filter
             "`$expand" = "Operation"
             "`$orderby" = "Created desc,Id desc"
-        }
-
-    foreach ($row in $rows) {
+        } | ForEach-Object {
+        $row = $_
         $operation = Get-NspODataProperty $row "Operation"
         if ((Get-NspODataProperty $operation "Type") -ne $OperationType) {
             throw "MessageOperations did not honor the requested operation type filter."
@@ -435,8 +443,8 @@ function Get-NspOperationRecords {
         if (-not $parsed -or $createdUtc -lt $StartUtc -or $createdUtc -ge $EndUtc) {
             throw "MessageOperations returned an invalid or out-of-period Created timestamp."
         }
+        Write-Output $row
     }
-    return $rows
 }
 
 function ConvertFrom-NspOperationData {
@@ -461,18 +469,22 @@ function Get-NspAnalysisEvidence {
         [Parameter(Mandatory = $true)][DateTime] $EndUtc
     )
 
-    $rows = @(Get-NspOperationRecords -OperationType $OperationType -StartUtc $StartUtc -EndUtc $EndUtc)
     $statusCounts = @{}
     $fileStatusCounts = @{}
     $executionStatusCounts = @{}
+    $trackIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::CurrentCultureIgnoreCase)
     $confirmedTrackIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $confirmedOperationCount = 0
-    $confirmedFileCount = 0
-    $inconclusiveOperationCount = 0
+    $operationCount = [long]0
+    $confirmedOperationCount = [long]0
+    $confirmedFileCount = [long]0
+    $inconclusiveOperationCount = [long]0
 
-    foreach ($row in $rows) {
+    Get-NspOperationRecords -OperationType $OperationType -StartUtc $StartUtc -EndUtc $EndUtc | ForEach-Object {
+        $row = $_
         $trackId = [string](Get-NspODataProperty $row "MessageTrackId")
         if (-not $trackId) { throw "MessageOperations omitted MessageTrackId." }
+        [void]$trackIds.Add($trackId)
+        $operationCount++
         $operation = Get-NspODataProperty $row "Operation"
         $data = ConvertFrom-NspOperationData $operation
         $rootStatusName = if ($OperationType -eq "SandboxAnalysis") { "sandboxAnalysisStatus" } else { "deepFileAnalysisStatus" }
@@ -523,8 +535,8 @@ function Get-NspAnalysisEvidence {
 
     return [pscustomobject]@{
         OperationType = $OperationType
-        OperationCount = [long]$rows.Count
-        UniqueTrackCount = [long](@($rows | ForEach-Object { [string](Get-NspODataProperty $_ "MessageTrackId") } | Sort-Object -Unique).Count)
+        OperationCount = $operationCount
+        UniqueTrackCount = [long]$trackIds.Count
         ConfirmedOperationCount = [long]$confirmedOperationCount
         ConfirmedTrackCount = [long]$confirmedTrackIds.Count
         ConfirmedFileCount = [long]$confirmedFileCount
@@ -545,12 +557,12 @@ function Get-NspMalwareRejectEvidence {
     $to = ConvertTo-NspODataDate $EndUtc
     $filter = "Name eq 'malwareScan' and Decision eq 'RejectPermanent' and MessageTrackSummary/Sent ge $from and MessageTrackSummary/Sent lt $to"
     $actionApply = "filter($filter)/groupby((MessageTrackId,MessageTrackSummary/MailId),aggregate(`$count as n))"
-    $actions = @(Get-NspODataApplyRows "/api/message-tracking/Actions" $actionApply "MessageTrackId,MessageTrackSummary/MailId")
     $trackIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $mailIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $actionEventCount = [long]0
     $unattributedActionCount = [long]0
-    foreach ($row in $actions) {
+    Get-NspODataApplyRows "/api/message-tracking/Actions" $actionApply "MessageTrackId,MessageTrackSummary/MailId" | ForEach-Object {
+        $row = $_
         $actionEventCount += Get-NspAggregateCount $row
         $trackId = [string](Get-NspODataProperty $row "MessageTrackId")
         if (-not $trackId) { throw "MalwareScan RejectPermanent action omitted MessageTrackId." }
@@ -559,7 +571,7 @@ function Get-NspMalwareRejectEvidence {
         if ($mailId) { [void]$mailIds.Add($mailId) }
         else { $unattributedActionCount++ }
     }
-    $messageIds = @($trackIds | Sort-Object)
+    $messageIds = @($trackIds)
     $infectedPartCount = [long]0
     $matchingOperationCount = [long]0
     $unverifiedOperationCount = [long]0
@@ -568,14 +580,14 @@ function Get-NspMalwareRejectEvidence {
     for ($start = 0; $start -lt $messageIds.Count; $start += 200) {
         $length = [Math]::Min(200, $messageIds.Count - $start)
         $chunk = [string[]]$messageIds[$start..($start + $length - 1)]
+        $chunkLookup = [System.Collections.Generic.HashSet[string]]::new($chunk, [StringComparer]::InvariantCultureIgnoreCase)
         $filterIds = "MessageTrackId in (" + ($chunk -join ",") + ") and Operation/Type eq 'MalwareScan' and Created ge $from and Created lt $to"
-        $operations = @(Get-NspODataItems -Path "/api/message-tracking/MessageOperations" -PageSize 100 `
-            -Query @{ "`$filter" = $filterIds; "`$expand" = "Operation"; "`$orderby" = "Id" })
-
-        foreach ($row in $operations) {
+        Get-NspODataItems -Path "/api/message-tracking/MessageOperations" -PageSize 500 `
+            -Query @{ "`$filter" = $filterIds; "`$expand" = "Operation"; "`$orderby" = "Id" } | ForEach-Object {
+            $row = $_
             $trackId = [string](Get-NspODataProperty $row "MessageTrackId")
             $operation = Get-NspODataProperty $row "Operation"
-            if ((Get-NspODataProperty $operation "Type") -ne "MalwareScan" -or $trackId -notin $chunk) {
+            if ((Get-NspODataProperty $operation "Type") -ne "MalwareScan" -or -not $chunkLookup.Contains($trackId)) {
                 throw "MalwareScan operation evidence did not match the requested message IDs."
             }
             [void]$matchedMessageIds.Add($trackId)
@@ -624,14 +636,74 @@ function Get-NspTopSpammers {
     $from = ConvertTo-NspODataDate $StartUtc
     $to = ConvertTo-NspODataDate $EndUtc
     $apply = "filter(MessageTrackSummary/Sent ge $from and MessageTrackSummary/Sent lt $to and (MessageTrackSummary/Status eq 'PermanentlyBlocked' or MessageTrackSummary/Status eq 'TemporarilyBlocked') and AddressType eq 'Recipient' and (" + ($domainConditions -join " or ") + "))/groupby((Address),aggregate(`$count as n))"
-    $addressRows = @(Get-NspODataApplyRows "/api/message-tracking/MessageAddresses" $apply "Address")
-    $result = foreach ($row in $addressRows) {
-        $address = [string](Get-NspODataProperty $row "Address")
-        if (-not [string]::IsNullOrWhiteSpace($address)) {
-            [pscustomobject]@{ Address = $address; Count = Get-NspAggregateCount $row }
+    $rankingState = @{
+        Cutoff = $null
+        LastCount = $null
+        ValidCount = 0
+        RequiresLegacySort = $false
+        Best = [System.Collections.Generic.List[object]]::new()
+        AddressComparer = [StringComparer]::CurrentCultureIgnoreCase
+    }
+    $processPage = {
+        param([object[]] $rows)
+        foreach ($row in $rows) {
+            $address = [string](Get-NspODataProperty $row "Address")
+            if ([string]::IsNullOrWhiteSpace($address)) { continue }
+            $count = Get-NspAggregateCount $row
+            if ($null -ne $rankingState.LastCount -and $count -gt $rankingState.LastCount) {
+                throw "OData returned recipient groups out of count order."
+            }
+            $rankingState.LastCount = $count
+            if ($null -ne $rankingState.Cutoff -and $count -lt $rankingState.Cutoff) { return $true }
+            $rankingState.ValidCount++
+            if ($rankingState.ValidCount -eq 10) { $rankingState.Cutoff = $count }
+            if ($rankingState.Best.Count -ge 10) {
+                $tenth = $rankingState.Best[9]
+                if ($count -lt $tenth.Count -or ($count -eq $tenth.Count -and
+                        $rankingState.AddressComparer.Compare($address, $tenth.Address) -gt 0)) { continue }
+            }
+            $position = 0
+            while ($position -lt $rankingState.Best.Count) {
+                $other = $rankingState.Best[$position]
+                if ($count -gt $other.Count) { break }
+                if ($count -eq $other.Count) {
+                    $comparison = $rankingState.AddressComparer.Compare($address, $other.Address)
+                    if ($comparison -eq 0 -and $address -cne $other.Address) {
+                        # Preserve the original full-sort ordering for indistinguishable address keys.
+                        $rankingState.RequiresLegacySort = $true
+                        return $true
+                    }
+                    if ($comparison -lt 0) { break }
+                }
+                $position++
+            }
+            $rankingState.Best.Insert($position, [pscustomobject]@{ Address = $address; Count = $count })
+            if ($rankingState.Best.Count -gt 10) {
+                $tenth = $rankingState.Best[9]
+                while ($rankingState.Best.Count -gt 10) {
+                    $last = $rankingState.Best[$rankingState.Best.Count - 1]
+                    if ($last.Count -eq $tenth.Count -and
+                        $rankingState.AddressComparer.Compare($last.Address, $tenth.Address) -eq 0) { break }
+                    $rankingState.Best.RemoveAt($rankingState.Best.Count - 1)
+                }
+            }
+        }
+        return $false
+    }
+    Get-NspODataItems -Path "/api/message-tracking/MessageAddresses" `
+        -Query @{ "`$apply" = $apply; "`$orderby" = "n desc,Address" } -PageHandler $processPage
+    if ($rankingState.RequiresLegacySort) {
+        $candidates = Get-NspODataApplyRows "/api/message-tracking/MessageAddresses" $apply "Address" | ForEach-Object {
+            $address = [string](Get-NspODataProperty $_ "Address")
+            if (-not [string]::IsNullOrWhiteSpace($address)) {
+                [pscustomobject]@{ Address = $address; Count = Get-NspAggregateCount $_ }
+            }
         }
     }
-    return @($result | Sort-Object -Property @{ Expression = "Count"; Descending = $true }, @{ Expression = "Address"; Ascending = $true } |
+    else {
+        $candidates = $rankingState.Best
+    }
+    return @($candidates | Sort-Object -Property @{ Expression = "Count"; Descending = $true }, @{ Expression = "Address"; Ascending = $true } |
         Select-Object -First 10)
 }
 
@@ -654,8 +726,10 @@ function Get-NspODataPeriodReportData {
         "(Name eq 'ContentFiltering' and Decision eq 'RejectPermanent')",
         "(Name eq 'ContentFiltering' and Decision eq 'RejectTemporarily')"
     ) -join " or "
-    $actionApply = "filter(MessageTrackSummary/Sent ge $from and MessageTrackSummary/Sent lt $to and ($actionTargets))/groupby((Name,Decision,MessageTrackSummary/MailId),aggregate(`$count as n))"
-    $filterApply = "filter(MessageTrackSummary/Sent ge $from and MessageTrackSummary/Sent lt $to and MessageTrackSummary/Status eq 'PermanentlyBlocked')/groupby((Name,Scl,MessageTrackSummary/MailId),aggregate(`$count as n))"
+    $actionFilter = "MessageTrackSummary/Sent ge $from and MessageTrackSummary/Sent lt $to and ($actionTargets)"
+    $actionApply = "filter($actionFilter)/groupby((Name,Decision),aggregate(`$count as n))"
+    $attributedActionApply = "filter($actionFilter and MessageTrackSummary/MailId ne null)/groupby((Name,Decision),aggregate(`$count as n,MessageTrackSummary/MailId with countdistinct as UniqueCount))"
+    $filterApply = "filter(MessageTrackSummary/Sent ge $from and MessageTrackSummary/Sent lt $to and MessageTrackSummary/Status eq 'PermanentlyBlocked')/groupby((Name,Scl),aggregate(`$count as n))"
     $attachmentApply = "filter(MessageTrackSummary/Sent ge $from and MessageTrackSummary/Sent lt $to)/groupby((MimeType,MessageTrackSummary/Status,IsQuarantined),aggregate(`$count as n))"
     $operationApply = "filter(Created ge $from and Created lt $to)/groupby((Operation/Type),aggregate(`$count as n))"
     $visitApply = "filter(VisitedOn ge $from and VisitedOn lt $to)/groupby((IsMalicious),aggregate(`$count as n))"
@@ -668,24 +742,42 @@ function Get-NspODataPeriodReportData {
     $actions = @{}
     $actionUniqueMessages = @{}
     $actionUnattributedEvents = @{}
+    $attributedActionEvents = @{}
     Write-NspODataProgress "Prüfaktionen"
-    Get-NspODataApplyRows "/api/message-tracking/Actions" $actionApply "Name,Decision,MessageTrackSummary/MailId" | ForEach-Object {
+    Get-NspODataApplyRows "/api/message-tracking/Actions" $actionApply "Name,Decision" | ForEach-Object {
         $row = $_
         $name = [string](Get-NspODataProperty $row "Name")
         $decision = [string](Get-NspODataProperty $row "Decision")
         if (-not $name) { $name = "(unknown action)" }
         if (-not $decision) { $decision = "(unknown decision)" }
-        $mailId = [string](Get-NspODataPathValue $row "MessageTrackSummary/MailId")
+        $key = "$name|$decision"
+        Add-NspCount $actions $key (Get-NspAggregateCount $row)
+    }
+    Get-NspODataApplyRows "/api/message-tracking/Actions" $attributedActionApply "Name,Decision" | ForEach-Object {
+        $row = $_
+        $name = [string](Get-NspODataProperty $row "Name")
+        $decision = [string](Get-NspODataProperty $row "Decision")
+        if (-not $name) { $name = "(unknown action)" }
+        if (-not $decision) { $decision = "(unknown decision)" }
         $key = "$name|$decision"
         $eventCount = Get-NspAggregateCount $row
-        Add-NspCount $actions $key $eventCount
-        if ($mailId) { Add-NspCount $actionUniqueMessages $key 1 }
-        else { Add-NspCount $actionUnattributedEvents $key $eventCount }
+        $uniqueCount = Get-NspAggregateCount $row "UniqueCount"
+        if (-not $actions.ContainsKey($key) -or $uniqueCount -gt $eventCount -or
+            ($eventCount -gt 0 -and $uniqueCount -eq 0)) {
+            throw "OData returned inconsistent action aggregates."
+        }
+        Add-NspCount $attributedActionEvents $key $eventCount
+        if ($uniqueCount -gt 0) { Add-NspCount $actionUniqueMessages $key $uniqueCount }
+    }
+    foreach ($key in $actions.Keys) {
+        $attributed = if ($attributedActionEvents.ContainsKey($key)) { $attributedActionEvents[$key] } else { [long]0 }
+        if ($attributed -gt $actions[$key]) { throw "OData returned inconsistent action aggregates." }
+        if ($attributed -lt $actions[$key]) { $actionUnattributedEvents[$key] = $actions[$key] - $attributed }
     }
 
     $filters = @{}
     Write-NspODataProgress "Filtertreffer"
-    Get-NspODataApplyRows "/api/message-tracking/Filters" $filterApply "Name,Scl,MessageTrackSummary/MailId" | ForEach-Object {
+    Get-NspODataApplyRows "/api/message-tracking/Filters" $filterApply "Name,Scl" | ForEach-Object {
         $row = $_
         $name = [string](Get-NspODataProperty $row "Name")
         if (-not $name) { $name = "(unknown filter)" }
@@ -694,29 +786,18 @@ function Get-NspODataPeriodReportData {
         if (-not $filters.ContainsKey($name)) {
             $filters[$name] = @{
                 Total = [long]0
-                UnattributedEvents = [long]0
                 PositiveScl = [long]0
                 Scl = @{}
-                MessageIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-                PositiveMessageIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             }
         }
         $count = Get-NspAggregateCount $row
         $filters[$name].Total += $count
         Add-NspCount $filters[$name].Scl $scl $count
-        $mailId = [string](Get-NspODataPathValue $row "MessageTrackSummary/MailId")
-        if ($mailId) { [void]$filters[$name].MessageIds.Add($mailId) }
-        else { $filters[$name].UnattributedEvents += $count }
         $sclNumber = 0.0
         if ([double]::TryParse($scl, [Globalization.NumberStyles]::Float,
                 [Globalization.CultureInfo]::InvariantCulture, [ref]$sclNumber) -and $sclNumber -gt 0) {
             $filters[$name].PositiveScl += $count
-            if ($mailId) { [void]$filters[$name].PositiveMessageIds.Add($mailId) }
         }
-    }
-    foreach ($name in @($filters.Keys)) {
-        $filters[$name].UniqueMessages = [long]$filters[$name].MessageIds.Count
-        $filters[$name].UniquePositiveMessages = [long]$filters[$name].PositiveMessageIds.Count
     }
 
     Write-NspODataProgress "Anhänge"
@@ -725,15 +806,18 @@ function Get-NspODataPeriodReportData {
     $operationRows = @(Get-NspODataApplyRows "/api/message-tracking/MessageOperations" $operationApply "Operation/Type")
     Write-NspODataProgress "URL-Aufrufe"
     $visitRows = @(Get-NspODataApplyRows "/api/message-tracking/UrlVisits" $visitApply "IsMalicious")
+    $recalledCount = [long]0
+    $unattributedRecallCount = [long]0
     Write-NspODataProgress "Zurückgerufene Nachrichten"
-    $recallRows = @(Get-NspODataApplyRows "/api/message-tracking/MessageTrackSummaries" $recallApply "MailId")
+    Get-NspODataApplyRows "/api/message-tracking/MessageTrackSummaries" $recallApply "MailId" | ForEach-Object {
+        if ([string](Get-NspODataPathValue $_ "MailId")) { $recalledCount++ }
+        else { $unattributedRecallCount++ }
+    }
 
     Write-NspODataProgress "Ergebnisse auswerten"
     $statusCounts = @{}
     $reasonCounts = @{}
     $directionCounts = @{}
-    $recalledCount = [long]0
-    $unattributedRecallCount = [long]0
     $messageTotal = [long]0
     foreach ($row in $summaryRows) {
         $count = Get-NspAggregateCount $row
@@ -750,11 +834,6 @@ function Get-NspODataPeriodReportData {
             Add-NspCount $reasonCounts $reason $count
         }
     }
-    foreach ($row in $recallRows) {
-        if ([string](Get-NspODataPathValue $row "MailId")) { $recalledCount++ }
-        else { $unattributedRecallCount++ }
-    }
-
     $attachments = @{}
     $quarantineCounts = @{ True = [long]0; False = [long]0; Null = [long]0 }
     $totalAttachmentCount = [long]0

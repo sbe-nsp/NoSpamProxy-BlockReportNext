@@ -1,3 +1,10 @@
+## [0.4.2] - Build 20261127.5 - 2026-11-27
+
+### Optimiert
+- Filter- und Aktionszahlen werden serverseitig aggregiert, wodurch bei großen Datenmengen deutlich weniger Einzelzeilen übertragen werden.
+- Analyseoperationen werden mit größeren OData-Seiten abgerufen und zusammen mit Recall- und Malware-Daten fortlaufend verarbeitet.
+- Die Empfängerrangliste berücksichtigt relevante Top-10-Gruppen und Gleichstände, ohne grundsätzlich alle Ergebnisse im Speicher zu sortieren.
+
 ## [0.4.1] - Build 20261127.4 - 2026-11-27
 
 ### Behoben

@@ -59,27 +59,32 @@ function Invoke-NspODataRequest {
         }
         "report" {
             if ($Path -eq "/api/message-tracking/Actions") {
+                if ($Query["`$apply"] -match "with countdistinct as UniqueCount") {
+                    $count = if ($script:inconsistentActions) { 6 } else { 2 }
+                    return [pscustomobject]@{ value = @(
+                        [pscustomobject]@{ Name = "malwareScan"; Decision = "RejectPermanent"; n = $count; UniqueCount = 1 }
+                    ) }
+                }
                 return [pscustomobject]@{ value = @(
-                    [pscustomobject]@{ Name = "malwareScan"; Decision = "RejectPermanent"; MessageTrackSummary = @{ MailId = "mail-a" }; n = 2 },
-                    [pscustomobject]@{ Name = "malwareScan"; Decision = "RejectPermanent"; MessageTrackSummary = @{ MailId = $null }; n = 3 }
+                    [pscustomobject]@{ Name = "malwareScan"; Decision = "RejectPermanent"; n = 5 },
+                    [pscustomobject]@{ Name = "other"; Decision = "RejectPermanent"; n = 4 }
                 ) }
             }
             if ($Path -eq "/api/message-tracking/Filters") {
-                $skip = [int]$Query["`$skip"]
-                $values = @(
-                    for ($i = $skip; $i -lt [Math]::Min($skip + 500, 100002); $i++) {
-                        if ($i -lt 100000) {
-                            [pscustomobject]@{ Name = "filter"; Scl = 1; MessageTrackSummary = @{ MailId = "mail-$i" }; n = 1 }
-                        }
-                        elseif ($i -eq 100000) {
-                            [pscustomobject]@{ Name = "filter"; Scl = 2; MessageTrackSummary = @{ MailId = "mail-0" }; n = 2 }
-                        }
-                        else {
-                            [pscustomobject]@{ Name = "filter"; Scl = $null; MessageTrackSummary = @{ MailId = $null }; n = 3 }
-                        }
-                    }
-                )
-                return [pscustomobject]@{ value = $values }
+                if ($Query["`$apply"] -notmatch "groupby\(\(Name,Scl\)," -or $Query["`$apply"] -match "MailId") {
+                    throw "Filter events must be aggregated without per-message rows."
+                }
+                return [pscustomobject]@{ value = @(
+                    [pscustomobject]@{ Name = "filter"; Scl = 1; n = 100000 },
+                    [pscustomobject]@{ Name = "filter"; Scl = 2; n = 2 },
+                    [pscustomobject]@{ Name = "filter"; Scl = $null; n = 3 }
+                ) }
+            }
+            if ($Path -eq "/api/message-tracking/MessageTrackSummaries" -and $Query["`$apply"] -match "groupby\(\(MailId\)") {
+                return [pscustomobject]@{ value = @(
+                    [pscustomobject]@{ MailId = "mail-a"; n = 2 },
+                    [pscustomobject]@{ MailId = $null; n = 3 }
+                ) }
             }
             return [pscustomobject]@{ value = @() }
         }
@@ -150,10 +155,20 @@ function Get-NspObservedUrlCounts { param($StartUtc, $EndUtc) return @{} }
 
 $script:mode = "report"
 $script:requests = 0
+$script:inconsistentActions = $false
 $end = [DateTime]::UtcNow.Date
 $report = Get-NspODataPeriodReportData -StartUtc $end.AddDays(-1) -EndUtc $end
 $filter = $report.FilterCounts["filter"]
-Assert-True ($filter.Total -eq 100005 -and $filter.PositiveScl -eq 100002 -and $filter.UnattributedEvents -eq 3) "Filter event counts must be preserved across more than 200 pages."
-Assert-True ($filter.UniqueMessages -eq 100000 -and $filter.UniquePositiveMessages -eq 100000) "Filter message counts must still deduplicate across scores and pages."
-Assert-True ($report.ActionCounts["malwareScan|RejectPermanent"] -eq 5 -and $report.ActionUniqueMessages["malwareScan|RejectPermanent"] -eq 1 -and $report.ActionUnattributedEvents["malwareScan|RejectPermanent"] -eq 3) "Streamed action counts must preserve their meaning."
+Assert-True ($filter.Total -eq 100005 -and $filter.PositiveScl -eq 100002 -and $filter.Scl["(null)"] -eq 3) "Aggregated filter event counts must preserve their meaning."
+Assert-True ($report.ActionCounts["malwareScan|RejectPermanent"] -eq 5 -and $report.ActionUniqueMessages["malwareScan|RejectPermanent"] -eq 1 -and $report.ActionUnattributedEvents["malwareScan|RejectPermanent"] -eq 3 -and $report.ActionUnattributedEvents["other|RejectPermanent"] -eq 4) "Aggregated action counts must preserve their meaning."
+Assert-True ($report.RecalledMessages -eq 1 -and $report.UnattributedRecallCount -eq 1) "Streamed recall groups must preserve unique and unattributed counts."
+
+$script:inconsistentActions = $true
+$failed = $false
+try { Get-NspODataPeriodReportData -StartUtc $end.AddDays(-1) -EndUtc $end | Out-Null }
+catch {
+    if ($_.Exception.Message -like "*inconsistent action aggregates*") { $failed = $true }
+    else { throw }
+}
+Assert-True $failed "Inconsistent aggregate results must fail instead of producing incorrect counts."
 Write-Host "Report pagination tests passed."
