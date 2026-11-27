@@ -3,13 +3,20 @@
 **Ein kompakter PowerShell-Analysebericht für NoSpamProxy.** Alle Daten werden lesend über die OData-Service-API abgerufen – ohne SQL-Zugriff.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.3.0/docs/report-preview.png" alt="Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <strong>NSP-dark (Standard)</strong><br>
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.0/docs/report-preview-nsp-dark.png" alt="NSP-dark: Vorschau des NoSpamProxy-Analyseberichts" width="876">
   <br>
-  <sub>Berichtsvorschau mit fiktiven Beispieldaten.</sub>
+  <strong>NSP-light</strong><br>
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.0/docs/report-preview-nsp-light.png" alt="NSP-light: Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <br>
+  <strong>NSP-Classic</strong><br>
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.0/docs/report-preview-nsp-classic.png" alt="NSP-Classic: Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <br>
+  <sub>Alle Berichtsvorschauen enthalten ausschließlich fiktive Beispieldaten.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.3.0">Release 0.3.0</a> ·
+  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.4.0">Release 0.4.0</a> ·
   <a href="#api-zugang-erstellen">API-Zugang erstellen</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#aufruf">Aufruf</a> ·
@@ -93,6 +100,8 @@ $outputPath = Join-Path $env:TEMP ("NoSpamProxy-Report-{0}.html" -f (Get-Date -F
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl $odataBaseUrl -NoSend -ReportType HTML -OutputPath $outputPath
 ```
 
+Während der Erstellung zeigt PowerShell den aktuellen Arbeitsschritt und die verstrichene Laufzeit an. Auch bei einer längeren OData-Abfrage läuft die Zeitanzeige weiter; eine Prozent- oder Restzeitprognose wird nicht vorgetäuscht. Die Anzeige lässt sich bei Bedarf mit `$ProgressPreference = 'SilentlyContinue'` ausblenden.
+
 Nach erfolgreichem Abschluss zeigt PowerShell den Speicherort der HTML-Datei an. Mit diesem Befehl lässt sich der Bericht im Browser öffnen:
 
 ```powershell
@@ -117,6 +126,8 @@ Zusätzlich enthält der Bericht weiterhin eine Top-10-Liste interner Empfänger
 
 Die vier Kennzahlen im Berichtskopf zeigen neben dem Vergleichswert die absolute und prozentuale Veränderung des aktuellen Zeitraums gegenüber dem Vergleichszeitraum. Ein Plus bedeutet einen Anstieg, ein Minus einen Rückgang.
 
+Für die Gestaltung stehen `NSP-dark` (Standard), `NSP-light` und `NSP-Classic` (die bisherige Vorlage) zur Wahl. Mit `-Template NSP-light` oder `-Template NSP-Classic` wird die jeweilige Vorlage für die HTML- und PDF-Berichte verwendet. Die E-Mail selbst enthält nur einen Klartext mit dem aktuellen Berichtszeitraum; die Berichte werden angehängt.
+
 Bei den Anteilen im Bereich „Blockierungsgründe“ zeigen „Differenz“ und „Änderung“ die relative Veränderung in Prozent. In anderen Bereichen werden Differenzen zwischen Anteilen als Prozentpunkte (`PP`) ausgewiesen; „Änderung“ zeigt dort die relative Veränderung. Die Blockierungsgründe `LoopDetected` und `None` werden nicht als Zeilen angezeigt, zählen aber weiterhin zum Nenner der Anteile. Filtertreffer werden kompakt als Ereignisse mit positiver Bewertung gezeigt; sie belegen für sich keine ursächliche Blockierung.
 
 `Policy` ist ein API-Ablehnungsgrund, der als „Richtlinie / Vorgabe“ übersetzt wird. Der Wert allein nennt weder die konkrete Regel noch die auslösende Aktion; diese lassen sich im Nachrichtentracking prüfen. `SpamOrVirus` allein belegt keinen bestätigten Malware-Fund.
@@ -128,16 +139,17 @@ Die Zeitfilter sind UTC. Bei `-Days 7` umfasst der aktuelle Zeitraum die letzten
 ## Voraussetzungen
 
 - Windows und PowerShell 5.1 oder neuer.
+- In der getesteten Umgebung lieferte die `OwnedDomains`-Abfrage unter PowerShell 7 HTTP 404; mit Windows PowerShell 5.1 funktionierte sie. Bei diesem Fehler Windows PowerShell 5.1 verwenden.
 - HTTPS-Zugriff auf die NoSpamProxy-Service-API und die eigene Basis-URL.
 - Ein PAT mit `read:messageTracking` und `read:ownedDomains`.
 - Für PDF-Ausgabe: Microsoft Edge. Ohne Edge wird beim Versand HTML als Fallback verwendet.
 - Für den Versand: erreichbarer SMTP-Relay auf Port 25, gültiger Absender und Empfänger.
-- `template.html` und `ReportOData.ps1` im selben Verzeichnis wie `Get-PermanentlyBlocked.ps1`.
-- Das NoSpamProxy-Logo ist in `template.html` eingebettet; eine separate Bilddatei ist nicht erforderlich.
+- `template-nsp-dark.html`, `template-nsp-light.html`, `template.html` und `ReportOData.ps1` im selben Verzeichnis wie `Get-PermanentlyBlocked.ps1`.
+- Das NoSpamProxy-Logo ist in alle Vorlagen eingebettet; eine separate Bilddatei ist nicht erforderlich.
 
 ## Installation
 
-Das [Anwenderpaket](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.3.0/NoSpamProxy-BlockReportNext-v0.3.0-build20261127.2.zip) herunterladen und entpacken. Es enthält nur `Get-PermanentlyBlocked.ps1`, `ReportOData.ps1`, `template.html` und diese README.
+Das [Anwenderpaket 0.4.0](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.4.0/NoSpamProxy-BlockReportNext-v0.4.0-build20261127.3.zip) herunterladen und entpacken. Es enthält die zwei PowerShell-Dateien, alle drei HTML-Vorlagen und die README.
 
 Alternativ den `master`-Branch klonen:
 
@@ -190,6 +202,13 @@ Für sieben Tage und die sieben Tage davor:
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -NoSend -OutputPath 'C:\Reports\NoSpamProxy-Report.html'
 ```
 
+Die helle oder klassische Vorlage auswählen:
+
+```powershell
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Template NSP-light -NoSend -OutputPath 'C:\Reports\NoSpamProxy-Report.html'
+# Alternativ: -Template NSP-Classic
+```
+
 HTML und PDF per SMTP versenden:
 
 ```powershell
@@ -209,7 +228,7 @@ Dieses Beispiel versendet den Bericht einmal pro Woche per SMTP. Ohne `-Days` ve
 
 ### 1. Voraussetzungen vorbereiten
 
-Entpacke das Anwenderpaket auf dem Windows-Computer, der den Bericht ausführen soll, beispielsweise nach `C:\Reports\NoSpamProxy-BlockReport`. Die drei Reportdateien müssen zusammen in diesem Verzeichnis bleiben. Der Computer benötigt Zugriff auf die eigene NoSpamProxy-Service-API und das SMTP-Relay.
+Entpacke das Anwenderpaket auf dem Windows-Computer, der den Bericht ausführen soll, beispielsweise nach `C:\Reports\NoSpamProxy-BlockReport`. Die beiden PowerShell-Dateien und alle drei Vorlagen müssen zusammen in diesem Verzeichnis bleiben. Der Computer benötigt Zugriff auf die eigene NoSpamProxy-Service-API und das SMTP-Relay.
 
 Falls Windows die heruntergeladenen Skripte aufgrund ihrer Internet-Herkunft blockiert, kannst du sie nach Prüfung des Pakets entsperren. Passe die Pfade bei Bedarf an:
 
@@ -291,6 +310,7 @@ Wähle die Aufgabe in der Aufgabenplanungsbibliothek aus und klicke auf **Ausfü
 | Parameter | Standard | Bedeutung |
 |---|---|---|
 | `-ReportType` | `Both` | `HTML`, `PDF` oder `Both`; steuert die E-Mail-Anhänge. |
+| `-Template` | `NSP-dark` | Berichtsgestaltung: `NSP-dark`, `NSP-light` oder `NSP-Classic`. |
 | `-SMTPHosts` | Beispieladressen | SMTP-Relays, der Reihe nach versucht. |
 | `-ReportSender` | Beispieladresse | Absenderadresse. |
 | `-ReportRecipients` | Beispieladresse | BCC-Empfänger. |
@@ -320,4 +340,4 @@ Die API wird ausschließlich mit GET-Abfragen verwendet. API-Antworten und Empf�
 
 ## Version
 
-Aktuelle Version: **0.3.0, Build 20261127.2 vom 27.11.2026**. Die Skriptversion ist im Berichtskopf sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.3.0).
+Aktuelle Version: **0.4.0, Build 20261127.3 vom 27.11.2026**. Die Skriptversion ist im Bericht sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.4.0).

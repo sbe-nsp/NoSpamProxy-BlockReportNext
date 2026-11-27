@@ -1,3 +1,15 @@
+## [0.4.0] - Build 20261127.3 - 2026-11-27
+
+### Neu
+- `-Template` wählt zwischen `NSP-dark` (Standard), `NSP-light` und der bisherigen Vorlage `NSP-Classic`.
+- Eine PowerShell-Fortschrittsanzeige zeigt den aktuellen Arbeitsschritt und die verstrichene Laufzeit, auch während längerer OData-Abfragen.
+- Die README zeigt alle drei Berichtsvorlagen mit fiktiven Beispieldaten.
+
+### Überarbeitet
+- NSP-dark und NSP-light bieten überarbeitete Übersichten, gleich breite Detailboxen und neutrale Vergleichswerte.
+- Die Überschriften der Berichtsbereiche sind nicht mehr nummeriert.
+- E-Mails enthalten einen Klartext mit dem aktuellen Berichtszeitraum; HTML und PDF werden je nach Auswahl angehängt.
+
 ## [0.3.0] - Build 20261127.2 - 2026-11-27
 
 ### Neu

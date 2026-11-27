@@ -13,6 +13,8 @@ Zeigt diese ausführliche Hilfe an, ohne einen Bericht zu erstellen oder die API
 .PARAMETER ReportType
 Berichtsformat beim E-Mail-Versand: HTML, PDF oder Both (Standard). PDF benötigt Microsoft Edge;
 ohne Edge oder bei einem PDF-Fehler wird HTML als Fallback verwendet.
+.PARAMETER Template
+Gestaltung des Berichts: NSP-dark (Standard), NSP-light oder NSP-Classic.
 .PARAMETER SMTPHosts
 Ein oder mehrere SMTP-Relay-Hostnamen/IP-Adressen. Versand über TCP 25; die Beispielwerte ersetzen.
 .PARAMETER ReportSender
@@ -49,6 +51,9 @@ muss durch die eigene Service-API-Basis-URL ersetzt werden.
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -NoSend -OutputPath "$env:TEMP\report.html"
 Vergleicht die letzten sieben vollständigen UTC-Tage mit den sieben Tagen davor.
 .EXAMPLE
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Template NSP-light -NoSend -OutputPath "$env:TEMP\report.html"
+Erstellt den Bericht mit der hellen Vorlage.
+.EXAMPLE
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -SMTPHosts 'smtp-relay.example.local' -ReportSender 'nsp-report@example.local' -ReportRecipients 'admin@example.local'
 Versendet den Bericht über einen konfigurierten SMTP-Relay. Der PAT muss bereits in NSP_API_KEY stehen.
 .NOTES
@@ -58,6 +63,8 @@ Die Zeitfenster sind UTC, jeweils Start inklusiv und Ende exklusiv. SQL wird nic
 param(
     [ValidateSet("HTML", "PDF", "Both")]
     [string] $ReportType = "Both",
+    [ValidateSet("NSP-dark", "NSP-light", "NSP-Classic")]
+    [string] $Template = "NSP-dark",
     [string[]] $SMTPHosts = @("192.0.2.1", "192.0.2.2"),
     [string] $ReportSender = "admin@example.invalid",
     [string[]] $ReportRecipients = @("admin@example.invalid"),
@@ -77,7 +84,7 @@ if ($Help) {
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
-$reportVersion = "0.3.0 (Build 20261127.2, 2026-11-27)"
+$reportVersion = "0.4.0 (Build 20261127.3, 2026-11-27)"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Web
 . (Join-Path $PSScriptRoot "ReportOData.ps1")
@@ -103,19 +110,46 @@ function Get-NspEmbeddedLogo {
     return [pscustomobject]@{ DataUri = $matches[0].Value; Bytes = $bytes }
 }
 
-function New-NspInlineLogoView {
+function New-NspReportMailMessage {
     param(
-        [Parameter(Mandatory = $true)][string] $Html,
-        [Parameter(Mandatory = $true)][byte[]] $LogoBytes
+        [Parameter(Mandatory = $true)][string] $Sender,
+        [Parameter(Mandatory = $true)][string[]] $Recipients,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $Subject,
+        [Parameter(Mandatory = $true)][string] $CurrentRange,
+        [Parameter(Mandatory = $true)][string] $HtmlPath,
+        [Parameter(Mandatory = $true)][string] $PdfPath,
+        [Parameter(Mandatory = $true)][ValidateSet("HTML", "PDF", "Both")][string] $ReportType,
+        [Parameter(Mandatory = $true)][bool] $PdfReady
     )
 
-    $htmlView = [Net.Mail.AlternateView]::CreateAlternateViewFromString($Html, [Text.Encoding]::UTF8, "text/html")
-    $logoStream = [IO.MemoryStream]::new($LogoBytes)
-    $logoResource = [Net.Mail.LinkedResource]::new($logoStream, "image/png")
-    $logoResource.ContentId = "nsp-report-logo"
-    $logoResource.TransferEncoding = [Net.Mime.TransferEncoding]::Base64
-    $htmlView.LinkedResources.Add($logoResource)
-    return $htmlView
+    $message = New-Object System.Net.Mail.MailMessage
+    try {
+        $message.From = $Sender
+        foreach ($recipient in $Recipients) { $message.Bcc.Add($recipient) }
+        $message.Subject = $Subject
+        $message.BodyEncoding = [Text.Encoding]::UTF8
+        $message.Body = "NoSpamProxy Analysebericht im Anhang für den Zeitraum $CurrentRange."
+        $message.IsBodyHtml = $false
+
+        $sendHtml = ($ReportType -eq "HTML") -or ($ReportType -eq "Both") -or (($ReportType -eq "PDF") -and -not $PdfReady)
+        if ($sendHtml) {
+            $htmlAttachment = New-Object System.Net.Mail.Attachment($HtmlPath)
+            $htmlAttachment.ContentType.MediaType = "text/html"
+            $htmlAttachment.Name = "NoSpamProxy-Report.html"
+            $message.Attachments.Add($htmlAttachment)
+        }
+        if ($PdfReady -and $ReportType -in @("PDF", "Both")) {
+            $pdfAttachment = New-Object System.Net.Mail.Attachment($PdfPath)
+            $pdfAttachment.ContentType.MediaType = "application/pdf"
+            $pdfAttachment.Name = "NoSpamProxy-Report.pdf"
+            $message.Attachments.Add($pdfAttachment)
+        }
+        return $message
+    }
+    catch {
+        $message.Dispose()
+        throw
+    }
 }
 
 function Format-NspCount {
@@ -189,11 +223,13 @@ function Add-NspPanel {
         [Parameter(Mandatory = $true)][System.Text.StringBuilder] $Builder,
         [Parameter(Mandatory = $true)][string] $Title,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string] $TableRows,
-        [string] $Footnote = ""
+        [string] $Footnote = "",
+        [string] $Id = ""
     )
 
     $safeTitle = ConvertTo-NspHtml $Title
-    [void]$Builder.AppendLine("<section class='panel'><h2>$safeTitle</h2><div class='table-wrap'><table><thead><tr><th>Messwert</th><th class='num'>Aktuell</th><th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th></tr></thead><tbody>$TableRows</tbody></table></div>")
+    $idAttribute = if ($Id) { " id='$(ConvertTo-NspHtml $Id)'" } else { "" }
+    [void]$Builder.AppendLine("<section class='panel'$idAttribute><h2>$safeTitle</h2><div class='table-wrap'><table><thead><tr><th>Messwert</th><th class='num'>Aktuell</th><th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th></tr></thead><tbody>$TableRows</tbody></table></div>")
     if ($Footnote) { [void]$Builder.AppendLine("<p class='footnote'>$(ConvertTo-NspHtml $Footnote)</p>") }
     [void]$Builder.AppendLine("</section>")
 }
@@ -240,12 +276,11 @@ function Get-NspPeriodRejectReasonShare {
     return ([double](Get-NspDictionaryCount $Period.RejectReasonCounts $Reason) / $blocked) * 100
 }
 
-function Format-NspKpiComparison {
+function Format-NspKpiChange {
     param([AllowNull()] $Current, [AllowNull()] $Previous)
 
-    $previousText = Format-NspCount $Previous
     if ($null -eq $Current -or $null -eq $Previous) {
-        return "Vergleichszeitraum: $previousText<br>Veränderung: -"
+        return "-"
     }
 
     $delta = [long]$Current - [long]$Previous
@@ -255,11 +290,14 @@ function Format-NspKpiComparison {
         $formatted = Format-NspPercent (([double]$delta / [double]$Previous) * 100)
         if ($delta -gt 0) { "+$formatted" } else { $formatted }
     }
-    return "Vergleichszeitraum: $previousText<br>Veränderung: $deltaText ($percentText)"
+    return "$deltaText ($percentText)"
 }
 
 function New-NspKpiCards {
-    param([Parameter(Mandatory = $true)] $ReportData)
+    param(
+        [Parameter(Mandatory = $true)] $ReportData,
+        [ValidateSet("NSP-dark", "NSP-light", "NSP-Classic")][string] $Design = "NSP-dark"
+    )
 
     $current = $ReportData.Current
     $previous = $ReportData.Comparison
@@ -270,13 +308,91 @@ function New-NspKpiCards {
     $currentTemporary = Get-NspDictionaryCount $current.StatusCounts "TemporarilyBlocked"
     $previousTemporary = Get-NspDictionaryCount $previous.StatusCounts "TemporarilyBlocked"
 
+    $metrics = @(
+        @{ Label = "Nachrichtentracks"; Mark = "▤"; Current = $current.MessageTotal; Previous = $previous.MessageTotal },
+        @{ Label = "Dauerhaft blockiert"; Mark = "◇"; Current = $currentPermanent; Previous = $previousPermanent },
+        @{ Label = "Temporär blockiert"; Mark = "◷"; Current = $currentTemporary; Previous = $previousTemporary },
+        @{ Label = "Blockierungen gesamt"; Mark = "◈"; Current = $currentBlocked; Previous = $previousBlocked }
+    )
+    $cards = [Text.StringBuilder]::new()
+    if ($Design -eq "NSP-Classic") {
+        [void]$cards.AppendLine('<table class="metrics" role="presentation"><tr>')
+    }
+    else {
+        [void]$cards.AppendLine("<section class='metrics' aria-label='Kennzahlen'>")
+    }
+    foreach ($metric in $metrics) {
+        $value = Format-NspCount $metric.Current
+        $previousValue = Format-NspCount $metric.Previous
+        $change = Format-NspKpiChange $metric.Current $metric.Previous
+        if ($Design -eq "NSP-Classic") {
+            $label = if ($metric.Label -eq "Nachrichtentracks") { "Nachrichtentracks aktuell" } else { $metric.Label }
+            [void]$cards.AppendLine("<td class='metric'><span class='value'>$value</span><span class='label'>$label</span><small>Vergleichszeitraum: $previousValue<br>Veränderung: $change</small></td>")
+        }
+        elseif ($Design -eq "NSP-light") {
+            [void]$cards.AppendLine("<article class='metric'><div class='metric-top'><span class='metric-title'>$($metric.Label)</span><span class='metric-mark' aria-hidden='true'>$($metric.Mark)</span></div><div class='metric-value'>$value</div><div class='metric-bottom'><div><small>Vergleichszeitraum</small><strong>$previousValue</strong></div><span class='change'>$change</span></div></article>")
+        }
+        else {
+            [void]$cards.AppendLine("<article class='metric'><div class='metric-label'>$($metric.Label)</div><div class='metric-value'>$value</div><div class='metric-foot'><div><small>Vergleichszeitraum</small><strong>$previousValue</strong></div><span class='delta'>$change</span></div></article>")
+        }
+    }
+    if ($Design -eq "NSP-Classic") { [void]$cards.AppendLine("</tr></table>") }
+    else { [void]$cards.AppendLine("</section>") }
+    return $cards.ToString()
+}
+
+function Format-NspChartWidth {
+    param([AllowNull()] $Percent)
+    if ($null -eq $Percent) { return "0" }
+    return ([Math]::Max(0, [Math]::Min(100, [double]$Percent))).ToString("0.####", [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function New-NspOverview {
+    param(
+        [Parameter(Mandatory = $true)] $ReportData,
+        [ValidateSet("NSP-dark", "NSP-light")][string] $Design = "NSP-dark"
+    )
+
+    $current = $ReportData.Current
+    $previous = $ReportData.Comparison
+    $blocked = Get-NspPeriodBlockTotal $current
+    $blockShare = if ($current.MessageTotal -gt 0) { ([double]$blocked / $current.MessageTotal) * 100 } else { $null }
+    $reasons = @(
+        @{ Key = "Policy"; Label = "Richtlinien / Vorgaben (Policy)" },
+        @{ Key = "SpamOrVirus"; Label = "Spam- oder Malware-Verdacht (SpamOrVirus)" }
+    )
+    $reasonHtml = [Text.StringBuilder]::new()
+    foreach ($reason in $reasons) {
+        $share = Get-NspPeriodRejectReasonShare $current $reason.Key
+        $shareText = Format-NspPercent $share
+        $width = Format-NspChartWidth $share
+        $currentCount = Format-NspCount (Get-NspDictionaryCount $current.RejectReasonCounts $reason.Key)
+        $previousCount = Format-NspCount (Get-NspDictionaryCount $previous.RejectReasonCounts $reason.Key)
+        if ($Design -eq "NSP-light") {
+            [void]$reasonHtml.AppendLine("<div class='reason'><div class='reason-line'><strong>$($reason.Label)</strong><b>$shareText</b></div><div class='track'><span style='width:$width%'></span></div><div class='reason-foot'><span>$currentCount aktuell</span><span>$previousCount im Vergleichszeitraum</span></div></div>")
+        }
+        else {
+            [void]$reasonHtml.AppendLine("<div class='reason-head'><strong>$($reason.Label)</strong><span>$shareText</span></div><div class='bar'><span style='width:$width%'></span></div><div class='reason-foot'><span>$currentCount aktuell</span><span>$previousCount im Vergleichszeitraum</span></div>")
+        }
+    }
+    $blockedText = Format-NspCount $blocked
+    $note = "Die Anteile beziehen sich auf alle dauerhaft und temporär blockierten Nachrichtentracks, einschließlich ausgeblendeter Gründe. Policy ist ein API-Ablehnungsgrund; SpamOrVirus allein bestätigt keinen Malware-Fund."
+    if ($Design -eq "NSP-light") {
+        return "<section class='card'><div class='card-head'><div><h3>Blockierungsgründe</h3><p class='desc'>Anteil an $blockedText blockierten Nachrichtentracks</p></div><span class='pill'>Verteilung</span></div>$reasonHtml<div class='insight'>$note</div></section>"
+    }
+
+    $shareText = Format-NspPercent $blockShare
+    $width = Format-NspChartWidth $blockShare
+    $remaining = Format-NspCount ($current.MessageTotal - $blocked)
+    $total = Format-NspCount $current.MessageTotal
     return @"
-<table class="metrics" role="presentation"><tr>
-  <td class="metric"><span class="value">$(Format-NspCount $current.MessageTotal)</span><span class="label">Nachrichtentracks aktuell</span><small>$(Format-NspKpiComparison $current.MessageTotal $previous.MessageTotal)</small></td>
-  <td class="metric"><span class="value">$(Format-NspCount $currentPermanent)</span><span class="label">Dauerhaft blockiert</span><small>$(Format-NspKpiComparison $currentPermanent $previousPermanent)</small></td>
-  <td class="metric"><span class="value">$(Format-NspCount $currentTemporary)</span><span class="label">Temporär blockiert</span><small>$(Format-NspKpiComparison $currentTemporary $previousTemporary)</small></td>
-  <td class="metric"><span class="value">$(Format-NspCount $currentBlocked)</span><span class="label">Blockierungen gesamt</span><small>$(Format-NspKpiComparison $currentBlocked $previousBlocked)</small></td>
-</tr></table>
+<div class="grid">
+  <section class="panel"><div class="panel-head"><div><h3>Verteilung der Nachrichtentracks</h3><p class="desc">Blockierungen im Verhältnis zur Gesamtzahl</p></div></div>
+    <div class="distribution"><div class="ring" style="background:conic-gradient(var(--amber) 0 $width%,#31515a $width% 100%)" aria-label="$shareText der Nachrichtentracks sind blockiert"><div><strong>$shareText</strong><small>BLOCKIERT</small></div></div>
+      <div class="legend"><div class="legend-row"><span class="legend-label"><i class="dot"></i>Blockierungen gesamt</span><strong>$blockedText</strong></div><div class="legend-row"><span class="legend-label"><i class="dot blue"></i>Übrige Nachrichtentracks</span><strong>$remaining</strong></div><div class="legend-row"><span class="legend-label">Nachrichtentracks gesamt</span><strong>$total</strong></div></div>
+    </div><p class="notice">Die übrigen Nachrichtentracks umfassen mehrere Status und sind nicht gleichbedeutend mit erfolgreich zugestellten Nachrichten.</p></section>
+  <section class="panel"><div class="panel-head"><div><h3>Blockierungsgründe</h3><p class="desc">Anteil an $blockedText blockierten Nachrichtentracks</p></div></div>$reasonHtml<p class="rule-note">$note</p></section>
+</div>
 "@
 }
 
@@ -306,7 +422,7 @@ function New-NspReportContent {
             (Get-NspDictionaryCount $current.StatusCounts $status) `
             (Get-NspDictionaryCount $previous.StatusCounts $status)
     }
-    Add-NspPanel $content "1. Nachrichtenübersicht" $statusRows.ToString() `
+    Add-NspPanel -Id "status" $content "Nachrichtenübersicht" $statusRows.ToString() `
         "Die Statuswerte basieren auf Nachrichtentracks. Die Gesamtzahl im Berichtskopf enthält auch nicht separat angezeigte Statuswerte."
 
     $reasonRows = [System.Text.StringBuilder]::new()
@@ -323,7 +439,7 @@ function New-NspReportContent {
             (Get-NspPeriodRejectReasonShare $current $reason) `
             (Get-NspPeriodRejectReasonShare $previous $reason) -RelativeDifference
     }
-    Add-NspPanel $content "2. Blockierungsgründe" $reasonRows.ToString() `
+    Add-NspPanel -Id "reasons" $content "Blockierungsgründe" $reasonRows.ToString() `
         "Policy ist ein von der API gemeldeter Ablehnungsgrund (Richtlinie / Vorgabe). Welche Regel oder Aktion die Ablehnung ausgelöst hat, muss im Nachrichtentracking geprüft werden. SpamOrVirus bezeichnet die API-Kategorie für Spam oder Malware und belegt allein keinen bestätigten Malware-Fund. Die Anteile beziehen sich auf alle dauerhaft und temporär blockierten Nachrichtentracks, einschließlich ausgeblendeter Gründe. Bei Anteilen zeigen Differenz und Änderung die relative Veränderung in Prozent."
 
     $filterRows = [System.Text.StringBuilder]::new()
@@ -406,7 +522,7 @@ function New-NspReportContent {
                 (Get-NspDictionaryCount $previous.ActionUnattributedEvents $key)
         }
     }
-    Add-NspPanel $content "Engine-Aktionen" $engineRows.ToString() `
+    Add-NspPanel -Id "engine" $content "Engine-Aktionen" $engineRows.ToString() `
         "Ereignisse und, soweit angezeigt, eindeutige MailIds sind unterschiedliche Zählweisen. Eine Nachricht kann mehrere Filter- und Aktionsereignisse erzeugen. Der Reputationsfilter ist nicht automatisch 32Guards zuzuordnen."
 
     $contentActionRows = [System.Text.StringBuilder]::new()
@@ -420,9 +536,9 @@ function New-NspReportContent {
     Add-NspCountTableRow $contentActionRows "Permanent abgelehnte Anhänge" $null $null
     Add-NspCountTableRow $contentActionRows "Abgelehnte Anhänge insgesamt" $null $null
     Add-NspCountTableRow $contentActionRows "Anhänge in Quarantäne" $current.QuarantineCounts.True $previous.QuarantineCounts.True
-    Add-NspPanel $content "3. ContentFiltering und Anhang-Quarantäne" $contentActionRows.ToString() `
+    Add-NspPanel -Id "content" $content "ContentFiltering und Anhang-Quarantäne" $contentActionRows.ToString() `
         "Die Inhaltsfilter-Werte zählen Ereignisse auf Nachrichtenebene und keine eindeutigen Anhänge. Die API weist Anhängen keinen ContentFiltering-Entscheidungsstatus zu."
-    Add-NspPanel $content "Filtertreffer bei dauerhaft blockierten Nachrichten" $filterRows.ToString() `
+    Add-NspPanel -Id "filter" $content "Filtertreffer bei dauerhaft blockierten Nachrichten" $filterRows.ToString() `
         "Gezählt werden Filterereignisse mit positiver Bewertung. Mehrere Ereignisse können dieselbe Nachricht betreffen; ein Filtertreffer allein belegt nicht, dass dieser Filter die Blockierung verursacht hat."
 
     $malwareRows = [System.Text.StringBuilder]::new()
@@ -465,25 +581,25 @@ function New-NspReportContent {
         ([double]$previous.MalwareRejectEvidence.MatchingOperationCount / $previousScans) * 100
     } else { $null }
     Add-NspPercentTableRow $malwareRows "Fundrate (zugeordnete RejectPermanent-Scans / alle MalwareScan-Operationen)" $currentMalwareRate $previousMalwareRate
-    Add-NspPanel $content "4. MalwareScan" $malwareRows.ToString() `
+    Add-NspPanel -Id "malware" $content "MalwareScan" $malwareRows.ToString() `
         "Die abgewiesenen E-Mails werden anhand eindeutiger MailIds gezählt. RejectPermanent-Aktionen werden anhand von MessageTrackId mit MalwareScan-Operationen korreliert. Bei unvollständiger Zuordnung werden infizierte Mailteile und Fundrate als - angezeigt. Gleiche Werte in beiden Zeiträumen können gemeinsam dargestellt werden; dies belegt keine Eins-zu-eins-Zuordnung der Messgrößen."
 
     $sandboxRows = [System.Text.StringBuilder]::new()
     Add-NspCountTableRow $sandboxRows "Analysevorgänge" $current.SandboxEvidence.OperationCount $previous.SandboxEvidence.OperationCount
     Add-NspCountTableRow $sandboxRows "Analysevorgänge mit bestätigtem Fund" $current.SandboxEvidence.ConfirmedOperationCount $previous.SandboxEvidence.ConfirmedOperationCount
-    Add-NspPanel $content "5. Sandbox-Analyse" $sandboxRows.ToString() `
+    Add-NspPanel -Id "sandbox" $content "Sandbox-Analyse" $sandboxRows.ToString() `
         "Ein bestätigter Fund erfordert den expliziten Ergebnisstatus Infected. Eine Ablehnung oder ein unbekanntes Ergebnis allein belegt keinen Malware-Fund. Sind Tracking-Details gelöscht, fehlen diese Vorgänge; ein Wert von 0 belegt daher keine vollständige Abwesenheit von Funden."
 
     $urlRows = [System.Text.StringBuilder]::new()
     Add-NspCountTableRow $urlRows "Unterschiedliche gesehene URLs" $current.ObservedUrls.Total $previous.ObservedUrls.Total
     Add-NspCountTableRow $urlRows "Unterschiedliche als bösartig markierte URLs" $current.ObservedUrls.Malicious $previous.ObservedUrls.Malicious
     Add-NspCountTableRow $urlRows "Klicks mit bösartiger Bewertung" $current.UrlVisitCounts.True $previous.UrlVisitCounts.True
-    Add-NspPanel $content "6. URL Safeguard" $urlRows.ToString() `
+    Add-NspPanel -Id "urls" $content "URL Safeguard" $urlRows.ToString() `
         "URLs werden anhand ihres Hashes einmal pro Zeitraum gezählt; die Zuordnung zum Zeitraum erfolgt über das Sendedatum der Nachricht. Bösartige URLs basieren auf der aktuellen API-Bewertung. Klicks zählen Besuchsereignisse mit bösartiger Bewertung anhand des Besuchszeitpunkts und müssen nicht zu den im selben Zeitraum gesehenen URLs gehören. Fehlende URL-Hashes ergeben -."
 
     $recallRows = [System.Text.StringBuilder]::new()
     Add-NspCountTableRow $recallRows "Zurückgerufene Nachrichten durch 32Guards Recall" $current.RecalledMessages $previous.RecalledMessages
-    Add-NspPanel $content "7. Zurückgerufene Nachrichten" $recallRows.ToString() `
+    Add-NspPanel -Id "recall" $content "Zurückgerufene Nachrichten" $recallRows.ToString() `
         "Zählung basiert auf MessageTrackSummaries.WasRecalled=true und eindeutigen MailId-Werten. Einträge ohne MailId werden nicht als eindeutige Nachrichten gezählt."
 
     $deepRows = [System.Text.StringBuilder]::new()
@@ -504,7 +620,7 @@ function New-NspReportContent {
             (Get-NspDictionaryCount $current.DeepFileEvidence.FileStatusCounts $status) `
             (Get-NspDictionaryCount $previous.DeepFileEvidence.FileStatusCounts $status)
     }
-    Add-NspPanel $content "8. 32Guards DeepFile Analyzer" $deepRows.ToString() `
+    Add-NspPanel -Id "deepfile" $content "32Guards DeepFile Analyzer" $deepRows.ToString() `
         "Als bestätigter Fund zählt ausschließlich ein expliziter Infected-Status auf Ergebnisebene. Übersprungene oder unbekannte Ergebnisse werden nicht als malwarefrei gezählt."
 
     $mimeRows = [System.Text.StringBuilder]::new()
@@ -543,7 +659,7 @@ function New-NspReportContent {
             [void]$mimeDetails.AppendLine("<details class='mime-details'><summary>$safeMime <span class='mime-counts'>Aktuell: $(Format-NspCount $currentCount) · Vergleich: $(Format-NspCount $previousCount)</span></summary><div class='table-wrap'><table><thead><tr><th>Detail</th><th class='num'>Aktuell</th><th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th></tr></thead><tbody>$($detailRows.ToString())</tbody></table></div></details>")
         }
     }
-    $mimeHtml = "<section class='panel'><h2>9. Häufigste MIME-Typen der Anhänge</h2><div class='table-wrap'><table><thead><tr><th>Messwert</th><th class='num'>Aktuell</th><th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th></tr></thead><tbody>$($mimeRows.ToString())</tbody></table></div>$($mimeDetails.ToString())<p class='footnote'>Die zehn häufigsten MIME-Typen werden nach aktuellem Zeitraum sortiert; bei leerem aktuellem Zeitraum nach dem Vergleichszeitraum. Statuswerte beziehen sich auf die verknüpfte Nachricht, nicht auf eine anhangspezifische ContentFiltering-Entscheidung. Differenzen von Anteilen sind in Prozentpunkten (PP) angegeben.</p></section>"
+    $mimeHtml = "<section class='panel' id='mime'><h2>Häufigste MIME-Typen der Anhänge</h2><div class='table-wrap'><table><thead><tr><th>Messwert</th><th class='num'>Aktuell</th><th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th></tr></thead><tbody>$($mimeRows.ToString())</tbody></table></div>$($mimeDetails.ToString())<p class='footnote'>Die zehn häufigsten MIME-Typen werden nach aktuellem Zeitraum sortiert; bei leerem aktuellem Zeitraum nach dem Vergleichszeitraum. Statuswerte beziehen sich auf die verknüpfte Nachricht, nicht auf eine anhangspezifische ContentFiltering-Entscheidung. Differenzen von Anteilen sind in Prozentpunkten (PP) angegeben.</p></section>"
     [void]$content.AppendLine($mimeHtml)
 
     $recipientRows = [System.Text.StringBuilder]::new()
@@ -611,6 +727,13 @@ if (-not $NoSend -and ($SMTPHosts.Count -eq 0 -or $ReportRecipients.Count -eq 0)
 if (-not $env:NSP_API_KEY) {
     throw "Set the NSP_API_KEY environment variable to the NoSpamProxy PAT before running the report."
 }
+$templateFile = switch ($Template) {
+    "NSP-light" { "template-nsp-light.html" }
+    "NSP-Classic" { "template.html" }
+    "NSP-dark" { "template-nsp-dark.html" }
+}
+$templatePath = Join-Path $PSScriptRoot $templateFile
+if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) { throw "Required HTML template not found: $templateFile" }
 
 $temporaryRoot = Join-Path $env:TEMP ("nsp-report-" + [guid]::NewGuid().ToString("N"))
 $htmlPath = Join-Path $temporaryRoot "report.html"
@@ -618,42 +741,45 @@ $pdfPath = Join-Path $temporaryRoot "report.pdf"
 $pdfProfile = Join-Path $temporaryRoot "edge-profile"
 $mailMessage = $null
 $smtpClient = $null
+$progressClock = [Diagnostics.Stopwatch]::StartNew()
 
 try {
     New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
     Write-Host "Reading NoSpamProxy report data through OData..."
-    $reportData = Get-NspODataReportData -BaseUrl $ODataBaseUrl -ApiKey $env:NSP_API_KEY -Days $Days
+    $reportData = Get-NspODataReportDataWithProgress -BaseUrl $ODataBaseUrl -ApiKey $env:NSP_API_KEY -Days $Days `
+        -ODataScriptPath (Join-Path $PSScriptRoot "ReportOData.ps1") -Stopwatch $progressClock
+    Write-NspReportProgress -Status "HTML-Bericht erstellen" -Stopwatch $progressClock
     $currentStart = $reportData.Current.StartUtc.ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
     $currentEnd = $reportData.Current.EndUtc.AddDays(-1).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
     $previousStart = $reportData.Comparison.StartUtc.ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
     $previousEnd = $reportData.Comparison.EndUtc.AddDays(-1).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
 
-    $kpis = New-NspKpiCards $reportData
-
-    $templatePath = Join-Path $PSScriptRoot "template.html"
-    if (-not (Test-Path -LiteralPath $templatePath)) { throw "Required HTML template not found: template.html" }
-    $template = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8)
-    $embeddedLogo = Get-NspEmbeddedLogo $template
+    $kpis = New-NspKpiCards $reportData -Design $Template
+    $overview = if ($Template -ne "NSP-Classic") { New-NspOverview $reportData -Design $Template } else { "" }
+    $templateHtml = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8)
+    [void](Get-NspEmbeddedLogo $templateHtml)
 
     $currentRange = "$currentStart bis einschließlich $currentEnd (UTC)"
     $previousRange = "$previousStart bis einschließlich $previousEnd (UTC)"
-    $template = $template.Replace("{{CURRENT_RANGE}}", (ConvertTo-NspHtml $currentRange))
-    $template = $template.Replace("{{PREVIOUS_RANGE}}", (ConvertTo-NspHtml $previousRange))
-    $template = $template.Replace("{{GENERATED_AT}}", (ConvertTo-NspHtml $reportData.GeneratedAtUtc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", [Globalization.CultureInfo]::InvariantCulture)))
-    $template = $template.Replace("{{KPI_CARDS}}", $kpis)
-    $template = $template.Replace("{{REPORT_VERSION}}", (ConvertTo-NspHtml $reportVersion))
-    $template = $template.Replace("{{REPORT_CONTENT}}", (New-NspReportContent $reportData))
-    [IO.File]::WriteAllText($htmlPath, $template, [Text.UTF8Encoding]::new($false))
+    $templateHtml = $templateHtml.Replace("{{CURRENT_RANGE}}", (ConvertTo-NspHtml $currentRange))
+    $templateHtml = $templateHtml.Replace("{{PREVIOUS_RANGE}}", (ConvertTo-NspHtml $previousRange))
+    $templateHtml = $templateHtml.Replace("{{GENERATED_AT}}", (ConvertTo-NspHtml $reportData.GeneratedAtUtc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", [Globalization.CultureInfo]::InvariantCulture)))
+    $templateHtml = $templateHtml.Replace("{{KPI_CARDS}}", $kpis)
+    $templateHtml = $templateHtml.Replace("{{OVERVIEW}}", $overview)
+    $templateHtml = $templateHtml.Replace("{{REPORT_VERSION}}", (ConvertTo-NspHtml $reportVersion))
+    $templateHtml = $templateHtml.Replace("{{REPORT_CONTENT}}", (New-NspReportContent $reportData))
+    [IO.File]::WriteAllText($htmlPath, $templateHtml, [Text.UTF8Encoding]::new($false))
 
     $edgePath = Get-NspEdgePath
     $pdfReady = $false
     if ($ReportType -in @("PDF", "Both")) {
+        Write-NspReportProgress -Status "PDF-Bericht erstellen" -Stopwatch $progressClock
         if (-not $edgePath) {
             Write-Warning "Microsoft Edge not found; PDF output is unavailable and HTML will be used as fallback."
         }
         else {
             $pdfHtmlPath = Join-Path $temporaryRoot "report-print.html"
-            $pdfHtml = $template.Replace("<details class='mime-details'>", "<details class='mime-details' open>")
+            $pdfHtml = $templateHtml.Replace("<details class='mime-details'>", "<details class='mime-details' open>")
             [IO.File]::WriteAllText($pdfHtmlPath, $pdfHtml, [Text.UTF8Encoding]::new($false))
             & $edgePath --headless --disable-gpu --no-first-run --no-default-browser-check "--user-data-dir=$pdfProfile" --no-pdf-header-footer --disable-print-preview --kiosk-printing "--print-to-pdf=$pdfPath" ([Uri]::new($pdfHtmlPath).AbsoluteUri) | Out-Null
             $pdfReady = ($LASTEXITCODE -eq 0) -and (Test-NspPdfReady -FilePath $pdfPath)
@@ -662,6 +788,7 @@ try {
     }
 
     if ($NoSend) {
+        Write-NspReportProgress -Status "HTML-Bericht speichern" -Stopwatch $progressClock
         if ($OutputPath) {
             $fullOutputPath = [IO.Path]::GetFullPath($OutputPath)
             $outputDirectory = Split-Path -Parent $fullOutputPath
@@ -677,40 +804,13 @@ try {
         return
     }
 
-    $emailHtml = $template.Replace($embeddedLogo.DataUri, "cid:nsp-report-logo")
-
-    $mailMessage = New-Object System.Net.Mail.MailMessage
-    $mailMessage.From = $ReportSender
-    foreach ($recipient in $ReportRecipients) { $mailMessage.Bcc.Add($recipient) }
-    $mailMessage.Subject = $ReportSubject
-    $mailMessage.BodyEncoding = [Text.Encoding]::UTF8
-
-    $sendHtml = ($ReportType -eq "HTML") -or ($ReportType -eq "Both") -or (($ReportType -eq "PDF") -and -not $pdfReady)
-    if ($sendHtml) {
-        $htmlAttachment = New-Object System.Net.Mail.Attachment($htmlPath)
-        $htmlAttachment.ContentType.MediaType = "text/html"
-        $htmlAttachment.Name = "NoSpamProxy-Report.html"
-        $mailMessage.Attachments.Add($htmlAttachment)
-    }
-    if ($pdfReady -and $ReportType -in @("PDF", "Both")) {
-        $pdfAttachment = New-Object System.Net.Mail.Attachment($pdfPath)
-        $pdfAttachment.ContentType.MediaType = "application/pdf"
-        $pdfAttachment.Name = "NoSpamProxy-Report.pdf"
-        $mailMessage.Attachments.Add($pdfAttachment)
-    }
-
-    if ($ReportType -eq "PDF" -and $pdfReady) {
-        $mailMessage.Body = "Der NoSpamProxy-Bericht ist als PDF angehängt."
-        $mailMessage.IsBodyHtml = $false
-    }
-    else {
-        $mailMessage.Body = $emailHtml
-        $mailMessage.IsBodyHtml = $true
-        $htmlView = New-NspInlineLogoView $emailHtml $embeddedLogo.Bytes
-        $mailMessage.AlternateViews.Add($htmlView)
-    }
+    Write-NspReportProgress -Status "E-Mail vorbereiten" -Stopwatch $progressClock
+    $mailMessage = New-NspReportMailMessage -Sender $ReportSender -Recipients $ReportRecipients `
+        -Subject $ReportSubject -CurrentRange $currentRange -HtmlPath $htmlPath -PdfPath $pdfPath `
+        -ReportType $ReportType -PdfReady $pdfReady
 
     $lastSmtpError = $null
+    Write-NspReportProgress -Status "E-Mail versenden" -Stopwatch $progressClock
     foreach ($smtpHost in $SMTPHosts) {
         $smtpClient = New-Object Net.Mail.SmtpClient($smtpHost, 25)
         try {
@@ -733,6 +833,7 @@ try {
     }
 }
 finally {
+    Write-Progress -Id 42 -Activity "NoSpamProxy-Bericht" -Completed
     if ($null -ne $mailMessage) { $mailMessage.Dispose() }
     if ($null -ne $smtpClient) { $smtpClient.Dispose() }
     if (Test-Path -LiteralPath $temporaryRoot) {

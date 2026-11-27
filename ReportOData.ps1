@@ -1,7 +1,78 @@
-$script:NspODataBaseUrl = $null
+﻿$script:NspODataBaseUrl = $null
 $script:NspODataApiKey = $null
 $script:NspODataToken = $null
 $script:NspODataTokenExpiry = [DateTimeOffset]::MinValue
+$script:NspODataProgressEnabled = $false
+$script:NspODataProgressPeriod = ""
+
+function Write-NspODataProgress {
+    param([Parameter(Mandatory = $true)][string] $Status)
+
+    if ($script:NspODataProgressEnabled) {
+        $description = if ($script:NspODataProgressPeriod) { "${script:NspODataProgressPeriod}: $Status" } else { $Status }
+        Write-Progress -Activity "NoSpamProxy-Bericht" -Status $description
+    }
+}
+
+function Write-NspReportProgress {
+    param(
+        [Parameter(Mandatory = $true)][string] $Status,
+        [Parameter(Mandatory = $true)][System.Diagnostics.Stopwatch] $Stopwatch
+    )
+
+    $elapsed = $Stopwatch.Elapsed
+    $duration = "{0:00}:{1:00}" -f [Math]::Floor($elapsed.TotalMinutes), $elapsed.Seconds
+    Write-Progress -Id 42 -Activity "NoSpamProxy-Bericht | $Status | Laufzeit: $duration" -Status "In Bearbeitung"
+}
+
+function Get-NspODataReportDataWithProgress {
+    param(
+        [Parameter(Mandatory = $true)][string] $BaseUrl,
+        [Parameter(Mandatory = $true)][string] $ApiKey,
+        [Parameter(Mandatory = $true)][int] $Days,
+        [Parameter(Mandatory = $true)][string] $ODataScriptPath,
+        [Parameter(Mandatory = $true)][System.Diagnostics.Stopwatch] $Stopwatch
+    )
+
+    if ($ProgressPreference -in @("SilentlyContinue", "Ignore")) {
+        return Get-NspODataReportData -BaseUrl $BaseUrl -ApiKey $ApiKey -Days $Days
+    }
+
+    $worker = [PowerShell]::Create()
+    $async = $null
+    try {
+        [void]$worker.AddScript({
+            param($Path, $Url, $Key, $PeriodDays)
+            $ErrorActionPreference = "Stop"
+            $ProgressPreference = "Continue"
+            . $Path
+            $script:NspODataProgressEnabled = $true
+            Get-NspODataReportData -BaseUrl $Url -ApiKey $Key -Days $PeriodDays
+        }.ToString()).AddArgument($ODataScriptPath).AddArgument($BaseUrl).AddArgument($ApiKey).AddArgument($Days)
+        $async = $worker.BeginInvoke()
+        $nextProgress = 0
+        $status = "OData-Abfrage wird vorbereitet"
+        do {
+            while ($nextProgress -lt $worker.Streams.Progress.Count) {
+                $record = $worker.Streams.Progress[$nextProgress++]
+                if ($record.Activity -eq "NoSpamProxy-Bericht" -and $record.RecordType -eq "Processing") {
+                    $status = $record.StatusDescription
+                }
+            }
+            Write-NspReportProgress -Status $status -Stopwatch $Stopwatch
+            if (-not $async.IsCompleted) { [void]$async.AsyncWaitHandle.WaitOne(1000) }
+        } while (-not $async.IsCompleted)
+
+        $result = $worker.EndInvoke($async)
+        if ($worker.HadErrors) { throw $worker.Streams.Error[0] }
+        if ($result.Count -ne 1) { throw "OData report collection returned an unexpected number of results." }
+        return $result[0]
+    }
+    finally {
+        if ($null -ne $async -and -not $async.IsCompleted) { $worker.Stop() }
+        $worker.Dispose()
+    }
+}
 
 function Initialize-NspOData {
     param(
@@ -567,14 +638,22 @@ function Get-NspODataPeriodReportData {
 
     $recallApply = "filter(Sent ge $from and Sent lt $to and WasRecalled eq true)/groupby((MailId),aggregate(`$count as n))"
 
+    Write-NspODataProgress "Nachrichten und Blockierungsgründe"
     $summaryRows = @(Get-NspODataApplyRows "/api/message-tracking/MessageTrackSummaries" $summaryApply "Status,RejectReason,WasReceivedFromRelayServer,WasRecalled")
+    Write-NspODataProgress "Prüfaktionen"
     $actionRows = @(Get-NspODataApplyRows "/api/message-tracking/Actions" $actionApply "Name,Decision,MessageTrackSummary/MailId")
+    Write-NspODataProgress "Filtertreffer"
     $filterRows = @(Get-NspODataApplyRows "/api/message-tracking/Filters" $filterApply "Name,Scl,MessageTrackSummary/MailId")
+    Write-NspODataProgress "Anhänge"
     $attachmentRows = @(Get-NspODataApplyRows "/api/message-tracking/Attachments" $attachmentApply "MimeType,MessageTrackSummary/Status,IsQuarantined")
+    Write-NspODataProgress "Analyseoperationen"
     $operationRows = @(Get-NspODataApplyRows "/api/message-tracking/MessageOperations" $operationApply "Operation/Type")
+    Write-NspODataProgress "URL-Aufrufe"
     $visitRows = @(Get-NspODataApplyRows "/api/message-tracking/UrlVisits" $visitApply "IsMalicious")
+    Write-NspODataProgress "Zurückgerufene Nachrichten"
     $recallRows = @(Get-NspODataApplyRows "/api/message-tracking/MessageTrackSummaries" $recallApply "MailId")
 
+    Write-NspODataProgress "Ergebnisse auswerten"
     $statusCounts = @{}
     $reasonCounts = @{}
     $directionCounts = @{}
@@ -694,6 +773,15 @@ function Get-NspODataPeriodReportData {
         else { $visitCounts.Null += Get-NspAggregateCount $row }
     }
 
+    Write-NspODataProgress "Malware-Analyse"
+    $malwareEvidence = Get-NspMalwareRejectEvidence -StartUtc $StartUtc -EndUtc $EndUtc
+    Write-NspODataProgress "Sandbox-Analyse"
+    $sandboxEvidence = Get-NspAnalysisEvidence -OperationType "SandboxAnalysis" -StartUtc $StartUtc -EndUtc $EndUtc
+    Write-NspODataProgress "DeepFile-Analyse"
+    $deepFileEvidence = Get-NspAnalysisEvidence -OperationType "DeepFileAnalysis" -StartUtc $StartUtc -EndUtc $EndUtc
+    Write-NspODataProgress "Erkannte URLs"
+    $observedUrls = Get-NspObservedUrlCounts -StartUtc $StartUtc -EndUtc $EndUtc
+
     return [pscustomobject]@{
         StartUtc = $StartUtc
         EndUtc = $EndUtc
@@ -711,10 +799,10 @@ function Get-NspODataPeriodReportData {
         TotalAttachments = $totalAttachmentCount
         QuarantineCounts = $quarantineCounts
         OperationCounts = $operationCounts
-        MalwareRejectEvidence = Get-NspMalwareRejectEvidence -StartUtc $StartUtc -EndUtc $EndUtc
-        SandboxEvidence = Get-NspAnalysisEvidence -OperationType "SandboxAnalysis" -StartUtc $StartUtc -EndUtc $EndUtc
-        DeepFileEvidence = Get-NspAnalysisEvidence -OperationType "DeepFileAnalysis" -StartUtc $StartUtc -EndUtc $EndUtc
-        ObservedUrls = Get-NspObservedUrlCounts -StartUtc $StartUtc -EndUtc $EndUtc
+        MalwareRejectEvidence = $malwareEvidence
+        SandboxEvidence = $sandboxEvidence
+        DeepFileEvidence = $deepFileEvidence
+        ObservedUrls = $observedUrls
         UrlVisitCounts = $visitCounts
     }
 }
@@ -731,9 +819,14 @@ function Get-NspODataReportData {
     if ($Days -gt $maxDays) { throw "The -Days value is too large to calculate two valid UTC periods." }
     $currentStart = $todayUtc.AddDays(-$Days)
     $comparisonStart = $currentStart.AddDays(-$Days)
+    Write-NspODataProgress "Verbindung vorbereiten"
     Initialize-NspOData -BaseUrl $BaseUrl -ApiKey $ApiKey
+    $script:NspODataProgressPeriod = "Aktueller Zeitraum"
     $current = Get-NspODataPeriodReportData -StartUtc $currentStart -EndUtc $todayUtc
+    $script:NspODataProgressPeriod = "Vergleichszeitraum"
     $comparison = Get-NspODataPeriodReportData -StartUtc $comparisonStart -EndUtc $currentStart
+    $script:NspODataProgressPeriod = "Aktueller Zeitraum"
+    Write-NspODataProgress "Empfänger-Rangliste"
     $topSpammers = @(Get-NspTopSpammers -StartUtc $currentStart -EndUtc $todayUtc)
 
     return [pscustomobject]@{

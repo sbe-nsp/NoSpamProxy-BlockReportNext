@@ -2,4 +2,6 @@
 /Get-PermanentlyBlocked.ps1 -export-ignore
 /ReportOData.ps1 -export-ignore
 /template.html -export-ignore
+/template-nsp-dark.html -export-ignore
+/template-nsp-light.html -export-ignore
 /README.md -export-ignore
