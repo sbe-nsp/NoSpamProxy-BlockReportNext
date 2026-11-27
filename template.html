@@ -47,14 +47,14 @@
         <div>
           <h1>NoSpamProxy Analysebericht</h1>
           <p class="period">Aktueller Zeitraum: {{CURRENT_RANGE}}</p>
-          <p class="period">Vergleichszeitraum: {{PREVIOUS_RANGE}}</p>
+          <!-- BEGIN_COMPARISON --><p class="period">Vergleichszeitraum: {{PREVIOUS_RANGE}}</p><!-- END_COMPARISON -->
         </div>
       </div>
       <div class="version">Version {{REPORT_VERSION}}</div>
     </header>
     {{KPI_CARDS}}
     {{REPORT_CONTENT}}
-    <p class="footnote">Erstellt am {{GENERATED_AT}}. Die angegebenen Kalendertage gelten jeweils vollständig in UTC. Prozentwerte und Änderungen werden vor der Anzeige gerundet; Berechnungen verwenden ungerundete Werte. Quelle: NoSpamProxy OData-Service.</p>
+    <p class="footnote">Erstellt am {{GENERATED_AT}}. Die angegebenen Kalendertage gelten jeweils vollständig in UTC. {{ROUNDING_NOTE}} Quelle: NoSpamProxy OData-Service.</p>
   </main>
 </body>
 </html>

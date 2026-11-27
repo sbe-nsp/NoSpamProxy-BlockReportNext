@@ -182,8 +182,15 @@ try {
     }
     $stub = @'
 function Get-NspODataReportDataWithProgress {
-    param($BaseUrl, $ApiKey, $Days, $ODataScriptPath, $Stopwatch)
+    param($BaseUrl, $ApiKey, $Days, $ComparisonDays, [switch] $NoComparison, $ODataScriptPath, $Stopwatch)
     if ($global:NspFixtureFail) { throw "fixture request failed" }
+    $global:NspFixtureArguments = @{ Days = $Days; ComparisonDays = $ComparisonDays; NoComparison = [bool]$NoComparison }
+    if ($NoComparison) {
+        return [pscustomobject]@{
+            Current = $global:NspFixtureReport.Current; Comparison = $null
+            TopSpammers = $global:NspFixtureReport.TopSpammers; GeneratedAtUtc = $global:NspFixtureReport.GeneratedAtUtc
+        }
+    }
     return $global:NspFixtureReport
 }
 function Write-NspReportProgress { param($Status, $Stopwatch) }
@@ -211,6 +218,20 @@ function Write-NspReportProgress { param($Status, $Stopwatch) }
         else {
             Assert-True ($html.Contains($design)) "$design selection must use the matching template."
         }
+        $arguments.Days = 7
+        $arguments.ComparisonDays = 30
+        & (Join-Path $entryFixtureRoot "Get-PermanentlyBlocked.ps1") @arguments
+        Assert-True ($global:NspFixtureArguments.Days -eq 7 -and $global:NspFixtureArguments.ComparisonDays -eq 30 -and -not $global:NspFixtureArguments.NoComparison) "$design must pass the selected comparison length."
+        $arguments.Remove("ComparisonDays")
+        $arguments.NoComparison = $true
+        & (Join-Path $entryFixtureRoot "Get-PermanentlyBlocked.ps1") @arguments
+        $html = [IO.File]::ReadAllText($output)
+        $decodedHtml = [Net.WebUtility]::HtmlDecode($html)
+        Assert-True ($global:NspFixtureArguments.NoComparison) "$design must disable comparison data retrieval."
+        Assert-True (-not ($decodedHtml -match 'Vergleich|Differenz|Änderung|Veränderung|\{\{|BEGIN_COMPARISON|END_COMPARISON')) "$design must not show comparison content or unresolved markers."
+        Assert-True ($html.Contains("Nachrichtentracks") -and $html.Contains(">150<") -and $html.Contains("application/pdf") -and $html.Contains("Sandbox-Analyse")) "$design must retain current KPIs, MIME details and report sections."
+        Assert-True ($decodedHtml -match "<td>Alle Anhänge</td><td class='num'>4</td></tr>" -and
+            $decodedHtml -match "<td>Anteil an allen Anhängen</td><td class='num'>75,00%</td></tr>") "$design must render current-only counts and percentages."
     }
     $global:NspFixtureFail = $true
     $global:NspFixtureCompleted = 0
@@ -227,7 +248,7 @@ function Write-NspReportProgress { param($Status, $Stopwatch) }
 }
 finally {
     Remove-Item Function:\Write-Progress -ErrorAction SilentlyContinue
-    Remove-Variable NspFixtureReport, NspFixtureFail, NspFixtureCompleted -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable NspFixtureReport, NspFixtureFail, NspFixtureCompleted, NspFixtureArguments -Scope Global -ErrorAction SilentlyContinue
     if ($null -eq $savedKey) { Remove-Item Env:\NSP_API_KEY -ErrorAction SilentlyContinue }
     else { $env:NSP_API_KEY = $savedKey }
     if (Test-Path -LiteralPath $entryFixtureRoot -PathType Container) {
@@ -302,4 +323,9 @@ $previous.AttachmentCounts = @{}
 $empty = New-NspReportContent $data
 Assert-True ($empty.Contains("Keine Anhangsdaten in diesem Zeitraum.")) "An empty MIME list must be explained."
 Assert-True (-not $empty.Contains("<details class='mime-details'>")) "An empty MIME list must not contain details."
+$current.FilterCounts = @{}
+$noComparisonData = [pscustomobject]@{ Current = $current; Comparison = $null; TopSpammers = @() }
+$emptyCurrent = New-NspReportContent $noComparisonData
+Assert-True ($emptyCurrent.Contains("<td colspan='2'>Keine Filtertreffer im aktuellen Zeitraum.</td>") -and
+    $emptyCurrent.Contains("<td colspan='2'>Keine Anhangsdaten in diesem Zeitraum.</td>")) "Empty current-only tables must use two columns and current-only wording."
 Write-Host "Report presentation tests passed."

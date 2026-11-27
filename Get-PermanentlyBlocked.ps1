@@ -1,11 +1,11 @@
 ﻿<#
 .SYNOPSIS
-Erstellt einen OData-basierten NoSpamProxy-Bericht für zwei gleich lange Zeiträume.
+Erstellt einen OData-basierten NoSpamProxy-Bericht mit optionalem Zeitraumvergleich.
 .DESCRIPTION
 Ruft alle Berichtsdaten ausschließlich lesend über die NoSpamProxy-OData-API ab. Mit -NoSend wird
 der HTML-Bericht lokal gespeichert, ohne eine E-Mail zu versenden. Der PAT muss in NSP_API_KEY stehen.
-Der Bericht vergleicht zwei vollständige, gleich lange Zeiträume in UTC. Standard sind 14 Tage
-pro Zeitraum; -Days legt die Länge fest. Der aktuelle UTC-Tag ist nicht enthalten.
+Standardmäßig vergleicht der Bericht zwei gleich lange, vollständige UTC-Zeiträume.
+Der aktuelle UTC-Tag ist nicht enthalten.
 Nicht belegbare Kennzahlen werden als - angezeigt. MIME-Details sind im HTML aufklappbar und im PDF geöffnet.
 Das eingebettete Logo erfordert keine separate Bilddatei.
 .PARAMETER Help
@@ -30,8 +30,11 @@ Erstellt den Bericht ohne SMTP-Versand.
 .PARAMETER OutputPath
 Zieldateipfad für den HTML-Bericht; bei -NoSend erforderlich und sonst nicht zulässig.
 .PARAMETER Days
-Anzahl vollständiger UTC-Tage pro Zeitraum. Standard: 14. Der Vergleichszeitraum ist ebenso lang
-und schließt direkt an den aktuellen Zeitraum an. Der heutige UTC-Tag ist ausgeschlossen.
+Anzahl vollständiger UTC-Tage im aktuellen Zeitraum. Standard: 14.
+.PARAMETER ComparisonDays
+Anzahl vollständiger UTC-Tage im unmittelbar vorhergehenden Vergleichszeitraum. Standard: Wert von -Days.
+.PARAMETER NoComparison
+Deaktiviert die Abfrage und Darstellung des Vergleichs. Nicht mit -ComparisonDays kombinierbar.
 .EXAMPLE
 .\Get-PermanentlyBlocked.ps1 -Help
 Zeigt die Hilfe an. API-Schlüssel und SMTP-Konfiguration sind hierfür nicht erforderlich.
@@ -50,6 +53,12 @@ muss durch die eigene Service-API-Basis-URL ersetzt werden.
 .EXAMPLE
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -NoSend -OutputPath "$env:TEMP\report.html"
 Vergleicht die letzten sieben vollständigen UTC-Tage mit den sieben Tagen davor.
+.EXAMPLE
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -ComparisonDays 14 -NoSend -OutputPath "$env:TEMP\report.html"
+Vergleicht sieben aktuelle Tage mit den 14 unmittelbar davorliegenden Tagen anhand der Gesamtzahlen.
+.EXAMPLE
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -NoComparison -NoSend -OutputPath "$env:TEMP\report.html"
+Erstellt den Bericht ohne Vergleichsabfragen und ohne Vergleichsdarstellung.
 .EXAMPLE
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Template NSP-light -NoSend -OutputPath "$env:TEMP\report.html"
 Erstellt den Bericht mit der hellen Vorlage.
@@ -74,9 +83,15 @@ param(
     [string] $OutputPath,
     [switch] $Help,
     [ValidateRange(1, 2147483647)]
-    [int] $Days = 14
+    [int] $Days = 14,
+    [ValidateRange(1, 2147483647)]
+    [int] $ComparisonDays = $Days,
+    [switch] $NoComparison
 )
 
+if ($NoComparison -and $PSBoundParameters.ContainsKey("ComparisonDays")) {
+    throw "-NoComparison cannot be combined with -ComparisonDays."
+}
 if ($Help) {
     Get-Help -Name $PSCommandPath -Full
     return
@@ -84,7 +99,7 @@ if ($Help) {
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
-$reportVersion = "0.4.2 (Build 20261127.5, 2026-11-27)"
+$reportVersion = "0.5.0 (Build 20261127.6, 2026-11-27)"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Web
 . (Join-Path $PSScriptRoot "ReportOData.ps1")
@@ -179,10 +194,15 @@ function Add-NspCountTableRow {
         [Parameter(Mandatory = $true)][string] $Label,
         [AllowNull()] $Current,
         [AllowNull()] $Previous,
-        [string] $Unit = ""
+        [string] $Unit = "",
+        [bool] $ShowComparison = $true
     )
 
     $safeLabel = ConvertTo-NspHtml $Label
+    if (-not $ShowComparison) {
+        [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspCount $Current)$Unit</td></tr>")
+        return
+    }
     if ($null -eq $Current -or $null -eq $Previous) {
         [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspCount $Current)$Unit</td><td class='num'>$(Format-NspCount $Previous)$Unit</td><td class='num'>-</td><td class='num'>-</td></tr>")
         return
@@ -203,10 +223,15 @@ function Add-NspPercentTableRow {
         [Parameter(Mandatory = $true)][string] $Label,
         [AllowNull()] $Current,
         [AllowNull()] $Previous,
-        [switch] $RelativeDifference
+        [switch] $RelativeDifference,
+        [bool] $ShowComparison = $true
     )
 
     $safeLabel = ConvertTo-NspHtml $Label
+    if (-not $ShowComparison) {
+        [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspPercent $Current)</td></tr>")
+        return
+    }
     if ($null -eq $Current -or $null -eq $Previous) {
         [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspPercent $Current)</td><td class='num'>$(Format-NspPercent $Previous)</td><td class='num'>-</td><td class='num'>-</td></tr>")
         return
@@ -224,12 +249,14 @@ function Add-NspPanel {
         [Parameter(Mandatory = $true)][string] $Title,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string] $TableRows,
         [string] $Footnote = "",
-        [string] $Id = ""
+        [string] $Id = "",
+        [bool] $ShowComparison = $true
     )
 
     $safeTitle = ConvertTo-NspHtml $Title
     $idAttribute = if ($Id) { " id='$(ConvertTo-NspHtml $Id)'" } else { "" }
-    [void]$Builder.AppendLine("<section class='panel'$idAttribute><h2>$safeTitle</h2><div class='table-wrap'><table><thead><tr><th>Messwert</th><th class='num'>Aktuell</th><th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th></tr></thead><tbody>$TableRows</tbody></table></div>")
+    $comparisonHeaders = if ($ShowComparison) { "<th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th>" } else { "" }
+    [void]$Builder.AppendLine("<section class='panel'$idAttribute><h2>$safeTitle</h2><div class='table-wrap'><table><thead><tr><th>Messwert</th><th class='num'>Aktuell</th>$comparisonHeaders</tr></thead><tbody>$TableRows</tbody></table></div>")
     if ($Footnote) { [void]$Builder.AppendLine("<p class='footnote'>$(ConvertTo-NspHtml $Footnote)</p>") }
     [void]$Builder.AppendLine("</section>")
 }
@@ -300,7 +327,8 @@ function New-NspKpiCards {
     )
 
     $current = $ReportData.Current
-    $previous = $ReportData.Comparison
+    $showComparison = $null -ne $ReportData.Comparison
+    $previous = if ($showComparison) { $ReportData.Comparison } else { $current }
     $currentBlocked = Get-NspPeriodBlockTotal $current
     $previousBlocked = Get-NspPeriodBlockTotal $previous
     $currentPermanent = Get-NspDictionaryCount $current.StatusCounts "PermanentlyBlocked"
@@ -323,17 +351,20 @@ function New-NspKpiCards {
     }
     foreach ($metric in $metrics) {
         $value = Format-NspCount $metric.Current
-        $previousValue = Format-NspCount $metric.Previous
-        $change = Format-NspKpiChange $metric.Current $metric.Previous
+        $previousValue = if ($showComparison) { Format-NspCount $metric.Previous } else { "" }
+        $change = if ($showComparison) { Format-NspKpiChange $metric.Current $metric.Previous } else { "" }
         if ($Design -eq "NSP-Classic") {
             $label = if ($metric.Label -eq "Nachrichtentracks") { "Nachrichtentracks aktuell" } else { $metric.Label }
-            [void]$cards.AppendLine("<td class='metric'><span class='value'>$value</span><span class='label'>$label</span><small>Vergleichszeitraum: $previousValue<br>Veränderung: $change</small></td>")
+            $comparisonHtml = if ($showComparison) { "<small>Vergleichszeitraum: $previousValue<br>Veränderung: $change</small>" } else { "" }
+            [void]$cards.AppendLine("<td class='metric'><span class='value'>$value</span><span class='label'>$label</span>$comparisonHtml</td>")
         }
         elseif ($Design -eq "NSP-light") {
-            [void]$cards.AppendLine("<article class='metric'><div class='metric-top'><span class='metric-title'>$($metric.Label)</span><span class='metric-mark' aria-hidden='true'>$($metric.Mark)</span></div><div class='metric-value'>$value</div><div class='metric-bottom'><div><small>Vergleichszeitraum</small><strong>$previousValue</strong></div><span class='change'>$change</span></div></article>")
+            $comparisonHtml = if ($showComparison) { "<div class='metric-bottom'><div><small>Vergleichszeitraum</small><strong>$previousValue</strong></div><span class='change'>$change</span></div>" } else { "" }
+            [void]$cards.AppendLine("<article class='metric'><div class='metric-top'><span class='metric-title'>$($metric.Label)</span><span class='metric-mark' aria-hidden='true'>$($metric.Mark)</span></div><div class='metric-value'>$value</div>$comparisonHtml</article>")
         }
         else {
-            [void]$cards.AppendLine("<article class='metric'><div class='metric-label'>$($metric.Label)</div><div class='metric-value'>$value</div><div class='metric-foot'><div><small>Vergleichszeitraum</small><strong>$previousValue</strong></div><span class='delta'>$change</span></div></article>")
+            $comparisonHtml = if ($showComparison) { "<div class='metric-foot'><div><small>Vergleichszeitraum</small><strong>$previousValue</strong></div><span class='delta'>$change</span></div>" } else { "" }
+            [void]$cards.AppendLine("<article class='metric'><div class='metric-label'>$($metric.Label)</div><div class='metric-value'>$value</div>$comparisonHtml</article>")
         }
     }
     if ($Design -eq "NSP-Classic") { [void]$cards.AppendLine("</tr></table>") }
@@ -367,12 +398,15 @@ function New-NspOverview {
         $shareText = Format-NspPercent $share
         $width = Format-NspChartWidth $share
         $currentCount = Format-NspCount (Get-NspDictionaryCount $current.RejectReasonCounts $reason.Key)
-        $previousCount = Format-NspCount (Get-NspDictionaryCount $previous.RejectReasonCounts $reason.Key)
+        $comparisonHtml = if ($null -ne $previous) {
+            $previousCount = Format-NspCount (Get-NspDictionaryCount $previous.RejectReasonCounts $reason.Key)
+            "<span>$previousCount im Vergleichszeitraum</span>"
+        } else { "" }
         if ($Design -eq "NSP-light") {
-            [void]$reasonHtml.AppendLine("<div class='reason'><div class='reason-line'><strong>$($reason.Label)</strong><b>$shareText</b></div><div class='track'><span style='width:$width%'></span></div><div class='reason-foot'><span>$currentCount aktuell</span><span>$previousCount im Vergleichszeitraum</span></div></div>")
+            [void]$reasonHtml.AppendLine("<div class='reason'><div class='reason-line'><strong>$($reason.Label)</strong><b>$shareText</b></div><div class='track'><span style='width:$width%'></span></div><div class='reason-foot'><span>$currentCount aktuell</span>$comparisonHtml</div></div>")
         }
         else {
-            [void]$reasonHtml.AppendLine("<div class='reason-head'><strong>$($reason.Label)</strong><span>$shareText</span></div><div class='bar'><span style='width:$width%'></span></div><div class='reason-foot'><span>$currentCount aktuell</span><span>$previousCount im Vergleichszeitraum</span></div>")
+            [void]$reasonHtml.AppendLine("<div class='reason-head'><strong>$($reason.Label)</strong><span>$shareText</span></div><div class='bar'><span style='width:$width%'></span></div><div class='reason-foot'><span>$currentCount aktuell</span>$comparisonHtml</div>")
         }
     }
     $blockedText = Format-NspCount $blocked
@@ -400,7 +434,11 @@ function New-NspReportContent {
     param([Parameter(Mandatory = $true)] $ReportData)
 
     $current = $ReportData.Current
-    $previous = $ReportData.Comparison
+    $showComparison = $null -ne $ReportData.Comparison
+    # Reuse the current shape when no comparison exists; only current values are rendered.
+    $previous = if ($showComparison) { $ReportData.Comparison } else { $current }
+    $columnCount = if ($showComparison) { 5 } else { 2 }
+    $comparisonHeaders = if ($showComparison) { "<th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th>" } else { "" }
     $content = [System.Text.StringBuilder]::new()
 
     $statusRows = [System.Text.StringBuilder]::new()
@@ -418,11 +456,11 @@ function New-NspReportContent {
     $allStatuses = @($allStatuses | Where-Object { $_ -and $_ -notin @("DuplicateDrop", "DeliveryPending") } | Sort-Object -Unique)
     foreach ($status in $allStatuses) {
         $statusLabel = if ($statusLabels.ContainsKey($status)) { $statusLabels[$status] } else { $status }
-        Add-NspCountTableRow $statusRows $statusLabel `
+        Add-NspCountTableRow -ShowComparison:$showComparison $statusRows $statusLabel `
             (Get-NspDictionaryCount $current.StatusCounts $status) `
             (Get-NspDictionaryCount $previous.StatusCounts $status)
     }
-    Add-NspPanel -Id "status" $content "Nachrichtenübersicht" $statusRows.ToString() `
+    Add-NspPanel -ShowComparison:$showComparison -Id "status" $content "Nachrichtenübersicht" $statusRows.ToString() `
         "Die Statuswerte basieren auf Nachrichtentracks. Die Gesamtzahl im Berichtskopf enthält auch nicht separat angezeigte Statuswerte."
 
     $reasonRows = [System.Text.StringBuilder]::new()
@@ -432,15 +470,16 @@ function New-NspReportContent {
     $reasons = @($reasons | Where-Object { $_ -and $_ -notin @("LoopDetected", "None") } | Sort-Object -Unique)
     foreach ($reason in $reasons) {
         $reasonLabel = if ($reasonLabels.ContainsKey($reason)) { $reasonLabels[$reason] } else { $reason }
-        Add-NspCountTableRow $reasonRows $reasonLabel `
+        Add-NspCountTableRow -ShowComparison:$showComparison $reasonRows $reasonLabel `
             (Get-NspDictionaryCount $current.RejectReasonCounts $reason) `
             (Get-NspDictionaryCount $previous.RejectReasonCounts $reason)
-        Add-NspPercentTableRow $reasonRows "$reasonLabel – Anteil an blockierten Nachrichten" `
+        Add-NspPercentTableRow -ShowComparison:$showComparison $reasonRows "$reasonLabel – Anteil an blockierten Nachrichten" `
             (Get-NspPeriodRejectReasonShare $current $reason) `
             (Get-NspPeriodRejectReasonShare $previous $reason) -RelativeDifference
     }
-    Add-NspPanel -Id "reasons" $content "Blockierungsgründe" $reasonRows.ToString() `
-        "Policy ist ein von der API gemeldeter Ablehnungsgrund (Richtlinie / Vorgabe). Welche Regel oder Aktion die Ablehnung ausgelöst hat, muss im Nachrichtentracking geprüft werden. SpamOrVirus bezeichnet die API-Kategorie für Spam oder Malware und belegt allein keinen bestätigten Malware-Fund. Die Anteile beziehen sich auf alle dauerhaft und temporär blockierten Nachrichtentracks, einschließlich ausgeblendeter Gründe. Bei Anteilen zeigen Differenz und Änderung die relative Veränderung in Prozent."
+    $reasonNote = "Policy ist ein von der API gemeldeter Ablehnungsgrund (Richtlinie / Vorgabe). Welche Regel oder Aktion die Ablehnung ausgelöst hat, muss im Nachrichtentracking geprüft werden. SpamOrVirus bezeichnet die API-Kategorie für Spam oder Malware und belegt allein keinen bestätigten Malware-Fund. Die Anteile beziehen sich auf alle dauerhaft und temporär blockierten Nachrichtentracks, einschließlich ausgeblendeter Gründe."
+    if ($showComparison) { $reasonNote += " Bei Anteilen zeigen Differenz und Änderung die relative Veränderung in Prozent." }
+    Add-NspPanel -ShowComparison:$showComparison -Id "reasons" $content "Blockierungsgründe" $reasonRows.ToString() $reasonNote
 
     $filterRows = [System.Text.StringBuilder]::new()
     $filterLabels = @{
@@ -459,11 +498,12 @@ function New-NspReportContent {
         $previousPositiveScl = if ($previousBucket) { $previousBucket.PositiveScl } else { [long]0 }
         if ($currentPositiveScl -gt 0 -or $previousPositiveScl -gt 0) {
             $displayName = if ($filterLabels.ContainsKey($name)) { $filterLabels[$name] } else { $name -replace "(?i)bitdefender(?:filter)?", "CSA / AV Engine" }
-            Add-NspCountTableRow $filterRows $displayName $currentPositiveScl $previousPositiveScl
+            Add-NspCountTableRow -ShowComparison:$showComparison $filterRows $displayName $currentPositiveScl $previousPositiveScl
         }
     }
     if ($filterRows.Length -eq 0) {
-        [void]$filterRows.AppendLine("<tr><td colspan='5'>Keine Filtertreffer in beiden Zeiträumen.</td></tr>")
+        $emptyFilterText = if ($showComparison) { "Keine Filtertreffer in beiden Zeiträumen." } else { "Keine Filtertreffer im aktuellen Zeitraum." }
+        [void]$filterRows.AppendLine("<tr><td colspan='$columnCount'>$emptyFilterText</td></tr>")
     }
     $engineRows = [System.Text.StringBuilder]::new()
     $actionLabels = @{
@@ -503,7 +543,7 @@ function New-NspReportContent {
         $decision = $engineAction.Decision
         $actionKey = "$name|$decision"
         $actionLabel = if ($actionLabels.ContainsKey($actionKey)) { $actionLabels[$actionKey] } else { "$name / $decision – Ereignisse" }
-        Add-NspCountTableRow $engineRows $actionLabel `
+        Add-NspCountTableRow -ShowComparison:$showComparison $engineRows $actionLabel `
             (Get-NspActionTotal $current $name $decision) `
             (Get-NspActionTotal $previous $name $decision)
         $showDetails = "$name|$decision" -notin @(
@@ -513,36 +553,36 @@ function New-NspReportContent {
                 "ContentFiltering|RejectTemporarily"
             )
         if ($showDetails) {
-            Add-NspCountTableRow $engineRows "$name / $decision – eindeutige MailIds" `
+            Add-NspCountTableRow -ShowComparison:$showComparison $engineRows "$name / $decision – eindeutige MailIds" `
                 (Get-NspActionUniqueMessageCount $current $name $decision) `
                 (Get-NspActionUniqueMessageCount $previous $name $decision)
             $key = "$name|$decision"
-            Add-NspCountTableRow $engineRows "$name / $decision – Ereignisse ohne MailId" `
+            Add-NspCountTableRow -ShowComparison:$showComparison $engineRows "$name / $decision – Ereignisse ohne MailId" `
                 (Get-NspDictionaryCount $current.ActionUnattributedEvents $key) `
                 (Get-NspDictionaryCount $previous.ActionUnattributedEvents $key)
         }
     }
-    Add-NspPanel -Id "engine" $content "Engine-Aktionen" $engineRows.ToString() `
+    Add-NspPanel -ShowComparison:$showComparison -Id "engine" $content "Engine-Aktionen" $engineRows.ToString() `
         "Ereignisse und, soweit angezeigt, eindeutige MailIds sind unterschiedliche Zählweisen. Eine Nachricht kann mehrere Filter- und Aktionsereignisse erzeugen. Der Reputationsfilter ist nicht automatisch 32Guards zuzuordnen."
 
     $contentActionRows = [System.Text.StringBuilder]::new()
     foreach ($decision in @("RejectPermanent", "RejectTemporarily")) {
         $label = if ($decision -eq "RejectPermanent") { "Inhaltsfilter - Permanent abgewiesen" } else { "Inhaltsfilter - Temporär abgewiesen" }
-        Add-NspCountTableRow $contentActionRows $label `
+        Add-NspCountTableRow -ShowComparison:$showComparison $contentActionRows $label `
             (Get-NspActionTotal $current "ContentFiltering" $decision) `
             (Get-NspActionTotal $previous "ContentFiltering" $decision)
     }
-    Add-NspCountTableRow $contentActionRows "Temporär abgelehnte Anhänge" $null $null
-    Add-NspCountTableRow $contentActionRows "Permanent abgelehnte Anhänge" $null $null
-    Add-NspCountTableRow $contentActionRows "Abgelehnte Anhänge insgesamt" $null $null
-    Add-NspCountTableRow $contentActionRows "Anhänge in Quarantäne" $current.QuarantineCounts.True $previous.QuarantineCounts.True
-    Add-NspPanel -Id "content" $content "ContentFiltering und Anhang-Quarantäne" $contentActionRows.ToString() `
+    Add-NspCountTableRow -ShowComparison:$showComparison $contentActionRows "Temporär abgelehnte Anhänge" $null $null
+    Add-NspCountTableRow -ShowComparison:$showComparison $contentActionRows "Permanent abgelehnte Anhänge" $null $null
+    Add-NspCountTableRow -ShowComparison:$showComparison $contentActionRows "Abgelehnte Anhänge insgesamt" $null $null
+    Add-NspCountTableRow -ShowComparison:$showComparison $contentActionRows "Anhänge in Quarantäne" $current.QuarantineCounts.True $previous.QuarantineCounts.True
+    Add-NspPanel -ShowComparison:$showComparison -Id "content" $content "ContentFiltering und Anhang-Quarantäne" $contentActionRows.ToString() `
         "Die Inhaltsfilter-Werte zählen Ereignisse auf Nachrichtenebene und keine eindeutigen Anhänge. Die API weist Anhängen keinen ContentFiltering-Entscheidungsstatus zu."
-    Add-NspPanel -Id "filter" $content "Filtertreffer bei dauerhaft blockierten Nachrichten" $filterRows.ToString() `
+    Add-NspPanel -ShowComparison:$showComparison -Id "filter" $content "Filtertreffer bei dauerhaft blockierten Nachrichten" $filterRows.ToString() `
         "Gezählt werden Filterereignisse mit positiver Bewertung. Mehrere Ereignisse können dieselbe Nachricht betreffen; ein Filtertreffer allein belegt nicht, dass dieser Filter die Blockierung verursacht hat."
 
     $malwareRows = [System.Text.StringBuilder]::new()
-    Add-NspCountTableRow $malwareRows "Malware Prüfung" `
+    Add-NspCountTableRow -ShowComparison:$showComparison $malwareRows "Malware Prüfung" `
         (Get-NspDictionaryCount $current.OperationCounts "MalwareScan") `
         (Get-NspDictionaryCount $previous.OperationCounts "MalwareScan")
     $currentInfectedParts = if ($current.MalwareRejectEvidence.EvidenceComplete) { $current.MalwareRejectEvidence.InfectedPartCount } else { $null }
@@ -570,7 +610,7 @@ function New-NspReportContent {
             }
         }
         $label = if ($labels.Contains("abgewiesene Nachrichten")) { "E-Mails abgewiesen wegen Malware" } else { $labels -join " / " }
-        Add-NspCountTableRow $malwareRows $label $measure.Current $measure.Previous
+        Add-NspCountTableRow -ShowComparison:$showComparison $malwareRows $label $measure.Current $measure.Previous
     }
     $currentScans = Get-NspDictionaryCount $current.OperationCounts "MalwareScan"
     $previousScans = Get-NspDictionaryCount $previous.OperationCounts "MalwareScan"
@@ -580,58 +620,59 @@ function New-NspReportContent {
     $previousMalwareRate = if ($previousScans -gt 0 -and $previous.MalwareRejectEvidence.EvidenceComplete) {
         ([double]$previous.MalwareRejectEvidence.MatchingOperationCount / $previousScans) * 100
     } else { $null }
-    Add-NspPercentTableRow $malwareRows "Fundrate (zugeordnete RejectPermanent-Scans / alle MalwareScan-Operationen)" $currentMalwareRate $previousMalwareRate
-    Add-NspPanel -Id "malware" $content "MalwareScan" $malwareRows.ToString() `
-        "Die abgewiesenen E-Mails werden anhand eindeutiger MailIds gezählt. RejectPermanent-Aktionen werden anhand von MessageTrackId mit MalwareScan-Operationen korreliert. Bei unvollständiger Zuordnung werden infizierte Mailteile und Fundrate als - angezeigt. Gleiche Werte in beiden Zeiträumen können gemeinsam dargestellt werden; dies belegt keine Eins-zu-eins-Zuordnung der Messgrößen."
+    Add-NspPercentTableRow -ShowComparison:$showComparison $malwareRows "Fundrate (zugeordnete RejectPermanent-Scans / alle MalwareScan-Operationen)" $currentMalwareRate $previousMalwareRate
+    $malwareNote = "Die abgewiesenen E-Mails werden anhand eindeutiger MailIds gezählt. RejectPermanent-Aktionen werden anhand von MessageTrackId mit MalwareScan-Operationen korreliert. Bei unvollständiger Zuordnung werden infizierte Mailteile und Fundrate als - angezeigt."
+    $malwareNote += if ($showComparison) { " Gleiche Werte in beiden Zeiträumen können gemeinsam dargestellt werden; dies belegt keine Eins-zu-eins-Zuordnung der Messgrößen." } else { " Gleiche Werte können gemeinsam dargestellt werden; dies belegt keine Eins-zu-eins-Zuordnung der Messgrößen." }
+    Add-NspPanel -ShowComparison:$showComparison -Id "malware" $content "MalwareScan" $malwareRows.ToString() $malwareNote
 
     $sandboxRows = [System.Text.StringBuilder]::new()
-    Add-NspCountTableRow $sandboxRows "Analysevorgänge" $current.SandboxEvidence.OperationCount $previous.SandboxEvidence.OperationCount
-    Add-NspCountTableRow $sandboxRows "Analysevorgänge mit bestätigtem Fund" $current.SandboxEvidence.ConfirmedOperationCount $previous.SandboxEvidence.ConfirmedOperationCount
-    Add-NspPanel -Id "sandbox" $content "Sandbox-Analyse" $sandboxRows.ToString() `
+    Add-NspCountTableRow -ShowComparison:$showComparison $sandboxRows "Analysevorgänge" $current.SandboxEvidence.OperationCount $previous.SandboxEvidence.OperationCount
+    Add-NspCountTableRow -ShowComparison:$showComparison $sandboxRows "Analysevorgänge mit bestätigtem Fund" $current.SandboxEvidence.ConfirmedOperationCount $previous.SandboxEvidence.ConfirmedOperationCount
+    Add-NspPanel -ShowComparison:$showComparison -Id "sandbox" $content "Sandbox-Analyse" $sandboxRows.ToString() `
         "Ein bestätigter Fund erfordert den expliziten Ergebnisstatus Infected. Eine Ablehnung oder ein unbekanntes Ergebnis allein belegt keinen Malware-Fund. Sind Tracking-Details gelöscht, fehlen diese Vorgänge; ein Wert von 0 belegt daher keine vollständige Abwesenheit von Funden."
 
     $urlRows = [System.Text.StringBuilder]::new()
-    Add-NspCountTableRow $urlRows "Unterschiedliche gesehene URLs" $current.ObservedUrls.Total $previous.ObservedUrls.Total
-    Add-NspCountTableRow $urlRows "Unterschiedliche als bösartig markierte URLs" $current.ObservedUrls.Malicious $previous.ObservedUrls.Malicious
-    Add-NspCountTableRow $urlRows "Klicks mit bösartiger Bewertung" $current.UrlVisitCounts.True $previous.UrlVisitCounts.True
-    Add-NspPanel -Id "urls" $content "URL Safeguard" $urlRows.ToString() `
+    Add-NspCountTableRow -ShowComparison:$showComparison $urlRows "Unterschiedliche gesehene URLs" $current.ObservedUrls.Total $previous.ObservedUrls.Total
+    Add-NspCountTableRow -ShowComparison:$showComparison $urlRows "Unterschiedliche als bösartig markierte URLs" $current.ObservedUrls.Malicious $previous.ObservedUrls.Malicious
+    Add-NspCountTableRow -ShowComparison:$showComparison $urlRows "Klicks mit bösartiger Bewertung" $current.UrlVisitCounts.True $previous.UrlVisitCounts.True
+    Add-NspPanel -ShowComparison:$showComparison -Id "urls" $content "URL Safeguard" $urlRows.ToString() `
         "URLs werden anhand ihres Hashes einmal pro Zeitraum gezählt; die Zuordnung zum Zeitraum erfolgt über das Sendedatum der Nachricht. Bösartige URLs basieren auf der aktuellen API-Bewertung. Klicks zählen Besuchsereignisse mit bösartiger Bewertung anhand des Besuchszeitpunkts und müssen nicht zu den im selben Zeitraum gesehenen URLs gehören. Fehlende URL-Hashes ergeben -."
 
     $recallRows = [System.Text.StringBuilder]::new()
-    Add-NspCountTableRow $recallRows "Zurückgerufene Nachrichten durch 32Guards Recall" $current.RecalledMessages $previous.RecalledMessages
-    Add-NspPanel -Id "recall" $content "Zurückgerufene Nachrichten" $recallRows.ToString() `
+    Add-NspCountTableRow -ShowComparison:$showComparison $recallRows "Zurückgerufene Nachrichten durch 32Guards Recall" $current.RecalledMessages $previous.RecalledMessages
+    Add-NspPanel -ShowComparison:$showComparison -Id "recall" $content "Zurückgerufene Nachrichten" $recallRows.ToString() `
         "Zählung basiert auf MessageTrackSummaries.WasRecalled=true und eindeutigen MailId-Werten. Einträge ohne MailId werden nicht als eindeutige Nachrichten gezählt."
 
     $deepRows = [System.Text.StringBuilder]::new()
-    Add-NspCountTableRow $deepRows "DeepFile-Analysevorgänge" $current.DeepFileEvidence.OperationCount $previous.DeepFileEvidence.OperationCount
-    Add-NspCountTableRow $deepRows "Nachrichtentracks mit einem Befund" $current.DeepFileEvidence.ConfirmedTrackCount $previous.DeepFileEvidence.ConfirmedTrackCount
-    Add-NspCountTableRow $deepRows "Operationen mit bestätigtem Fund" $current.DeepFileEvidence.ConfirmedOperationCount $previous.DeepFileEvidence.ConfirmedOperationCount
-    Add-NspCountTableRow $deepRows "Analyseergebnisse mit Status Infected" $current.DeepFileEvidence.ConfirmedFileCount $previous.DeepFileEvidence.ConfirmedFileCount
-    Add-NspCountTableRow $deepRows "Unvollständige / nicht eindeutige Ergebnisse" $current.DeepFileEvidence.InconclusiveOperationCount $previous.DeepFileEvidence.InconclusiveOperationCount
+    Add-NspCountTableRow -ShowComparison:$showComparison $deepRows "DeepFile-Analysevorgänge" $current.DeepFileEvidence.OperationCount $previous.DeepFileEvidence.OperationCount
+    Add-NspCountTableRow -ShowComparison:$showComparison $deepRows "Nachrichtentracks mit einem Befund" $current.DeepFileEvidence.ConfirmedTrackCount $previous.DeepFileEvidence.ConfirmedTrackCount
+    Add-NspCountTableRow -ShowComparison:$showComparison $deepRows "Operationen mit bestätigtem Fund" $current.DeepFileEvidence.ConfirmedOperationCount $previous.DeepFileEvidence.ConfirmedOperationCount
+    Add-NspCountTableRow -ShowComparison:$showComparison $deepRows "Analyseergebnisse mit Status Infected" $current.DeepFileEvidence.ConfirmedFileCount $previous.DeepFileEvidence.ConfirmedFileCount
+    Add-NspCountTableRow -ShowComparison:$showComparison $deepRows "Unvollständige / nicht eindeutige Ergebnisse" $current.DeepFileEvidence.InconclusiveOperationCount $previous.DeepFileEvidence.InconclusiveOperationCount
     $deepStatuses = @(@($current.DeepFileEvidence.StatusCounts.Keys) + @($previous.DeepFileEvidence.StatusCounts.Keys) | Where-Object { $_ } | Sort-Object -Unique)
     foreach ($status in $deepStatuses) {
-        Add-NspCountTableRow $deepRows "DeepFile-Status: $status" `
+        Add-NspCountTableRow -ShowComparison:$showComparison $deepRows "DeepFile-Status: $status" `
             (Get-NspDictionaryCount $current.DeepFileEvidence.StatusCounts $status) `
             (Get-NspDictionaryCount $previous.DeepFileEvidence.StatusCounts $status)
     }
     $deepResultStatuses = @(@($current.DeepFileEvidence.FileStatusCounts.Keys) + @($previous.DeepFileEvidence.FileStatusCounts.Keys) | Where-Object { $_ } | Sort-Object -Unique)
     foreach ($status in $deepResultStatuses) {
-        Add-NspCountTableRow $deepRows "DeepFile-Ergebnisstatus: $status" `
+        Add-NspCountTableRow -ShowComparison:$showComparison $deepRows "DeepFile-Ergebnisstatus: $status" `
             (Get-NspDictionaryCount $current.DeepFileEvidence.FileStatusCounts $status) `
             (Get-NspDictionaryCount $previous.DeepFileEvidence.FileStatusCounts $status)
     }
-    Add-NspPanel -Id "deepfile" $content "32Guards DeepFile Analyzer" $deepRows.ToString() `
+    Add-NspPanel -ShowComparison:$showComparison -Id "deepfile" $content "32Guards DeepFile Analyzer" $deepRows.ToString() `
         "Als bestätigter Fund zählt ausschließlich ein expliziter Infected-Status auf Ergebnisebene. Übersprungene oder unbekannte Ergebnisse werden nicht als malwarefrei gezählt."
 
     $mimeRows = [System.Text.StringBuilder]::new()
     $mimeDetails = [System.Text.StringBuilder]::new()
-    Add-NspCountTableRow $mimeRows "Alle Anhänge" $current.TotalAttachments $previous.TotalAttachments
+    Add-NspCountTableRow -ShowComparison:$showComparison $mimeRows "Alle Anhänge" $current.TotalAttachments $previous.TotalAttachments
     $mimeRankingSource = if ($current.AttachmentCounts.Count -gt 0) { $current.AttachmentCounts } else { $previous.AttachmentCounts }
     $topMimeTypes = @($mimeRankingSource.GetEnumerator() |
         Sort-Object -Property @{ Expression = { [long]$_.Value.Total }; Descending = $true }, @{ Expression = { [string]$_.Key }; Ascending = $true } |
         Select-Object -First 10)
     if ($topMimeTypes.Count -eq 0) {
-        [void]$mimeRows.AppendLine("<tr><td colspan='5'>Keine Anhangsdaten in diesem Zeitraum.</td></tr>")
+        [void]$mimeRows.AppendLine("<tr><td colspan='$columnCount'>Keine Anhangsdaten in diesem Zeitraum.</td></tr>")
     }
     else {
         foreach ($entry in $topMimeTypes) {
@@ -641,25 +682,29 @@ function New-NspReportContent {
             $currentCount = if ($currentBucket) { [long]$currentBucket.Total } else { [long]0 }
             $previousCount = if ($previousBucket) { [long]$previousBucket.Total } else { [long]0 }
             $detailRows = [System.Text.StringBuilder]::new()
-            Add-NspCountTableRow $detailRows "Anhänge" $currentCount $previousCount
+            Add-NspCountTableRow -ShowComparison:$showComparison $detailRows "Anhänge" $currentCount $previousCount
             $currentShare = if ($current.TotalAttachments -gt 0) { ([double]$currentCount / $current.TotalAttachments) * 100 } else { $null }
             $previousShare = if ($previous.TotalAttachments -gt 0 -and $previousBucket) { ([double]$previousCount / $previous.TotalAttachments) * 100 } elseif ($previous.TotalAttachments -gt 0) { 0 } else { $null }
-            Add-NspPercentTableRow $detailRows "Anteil an allen Anhängen" $currentShare $previousShare
+            Add-NspPercentTableRow -ShowComparison:$showComparison $detailRows "Anteil an allen Anhängen" $currentShare $previousShare
             foreach ($status in @("Success", "TemporarilyBlocked", "PermanentlyBlocked")) {
                 $currentStatusCounts = if ($currentBucket) { $currentBucket.Status } else { $null }
                 $previousStatusCounts = if ($previousBucket) { $previousBucket.Status } else { $null }
                 $currentStatus = Get-NspDictionaryCount $currentStatusCounts $status
                 $previousStatus = Get-NspDictionaryCount $previousStatusCounts $status
-                Add-NspCountTableRow $detailRows "Status der Nachricht: $($statusLabels[$status])" $currentStatus $previousStatus
+                Add-NspCountTableRow -ShowComparison:$showComparison $detailRows "Status der Nachricht: $($statusLabels[$status])" $currentStatus $previousStatus
             }
             $currentQuarantined = if ($currentBucket) { [long]$currentBucket.Quarantined } else { [long]0 }
             $previousQuarantined = if ($previousBucket) { [long]$previousBucket.Quarantined } else { [long]0 }
-            Add-NspCountTableRow $detailRows "Anhänge in Quarantäne" $currentQuarantined $previousQuarantined
+            Add-NspCountTableRow -ShowComparison:$showComparison $detailRows "Anhänge in Quarantäne" $currentQuarantined $previousQuarantined
             $safeMime = ConvertTo-NspHtml $mime
-            [void]$mimeDetails.AppendLine("<details class='mime-details'><summary>$safeMime <span class='mime-counts'>Aktuell: $(Format-NspCount $currentCount) · Vergleich: $(Format-NspCount $previousCount)</span></summary><div class='table-wrap'><table><thead><tr><th>Detail</th><th class='num'>Aktuell</th><th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th></tr></thead><tbody>$($detailRows.ToString())</tbody></table></div></details>")
+            $comparisonCount = if ($showComparison) { " · Vergleich: $(Format-NspCount $previousCount)" } else { "" }
+            [void]$mimeDetails.AppendLine("<details class='mime-details'><summary>$safeMime <span class='mime-counts'>Aktuell: $(Format-NspCount $currentCount)$comparisonCount</span></summary><div class='table-wrap'><table><thead><tr><th>Detail</th><th class='num'>Aktuell</th>$comparisonHeaders</tr></thead><tbody>$($detailRows.ToString())</tbody></table></div></details>")
         }
     }
-    $mimeHtml = "<section class='panel' id='mime'><h2>Häufigste MIME-Typen der Anhänge</h2><div class='table-wrap'><table><thead><tr><th>Messwert</th><th class='num'>Aktuell</th><th class='num'>Vergleich</th><th class='num'>Differenz</th><th class='num'>Änderung</th></tr></thead><tbody>$($mimeRows.ToString())</tbody></table></div>$($mimeDetails.ToString())<p class='footnote'>Die zehn häufigsten MIME-Typen werden nach aktuellem Zeitraum sortiert; bei leerem aktuellem Zeitraum nach dem Vergleichszeitraum. Statuswerte beziehen sich auf die verknüpfte Nachricht, nicht auf eine anhangspezifische ContentFiltering-Entscheidung. Differenzen von Anteilen sind in Prozentpunkten (PP) angegeben.</p></section>"
+    $mimeNote = if ($showComparison) { "Die zehn häufigsten MIME-Typen werden nach aktuellem Zeitraum sortiert; bei leerem aktuellem Zeitraum nach dem Vergleichszeitraum." } else { "Die zehn häufigsten MIME-Typen werden nach aktuellem Zeitraum sortiert." }
+    $mimeNote += " Statuswerte beziehen sich auf die verknüpfte Nachricht, nicht auf eine anhangspezifische ContentFiltering-Entscheidung."
+    if ($showComparison) { $mimeNote += " Differenzen von Anteilen sind in Prozentpunkten (PP) angegeben." }
+    $mimeHtml = "<section class='panel' id='mime'><h2>Häufigste MIME-Typen der Anhänge</h2><div class='table-wrap'><table><thead><tr><th>Messwert</th><th class='num'>Aktuell</th>$comparisonHeaders</tr></thead><tbody>$($mimeRows.ToString())</tbody></table></div>$($mimeDetails.ToString())<p class='footnote'>$mimeNote</p></section>"
     [void]$content.AppendLine($mimeHtml)
 
     $recipientRows = [System.Text.StringBuilder]::new()
@@ -746,13 +791,15 @@ $progressClock = [Diagnostics.Stopwatch]::StartNew()
 try {
     New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
     Write-Host "Reading NoSpamProxy report data through OData..."
-    $reportData = Get-NspODataReportDataWithProgress -BaseUrl $ODataBaseUrl -ApiKey $env:NSP_API_KEY -Days $Days `
-        -ODataScriptPath (Join-Path $PSScriptRoot "ReportOData.ps1") -Stopwatch $progressClock
+    $reportArguments = @{
+        BaseUrl = $ODataBaseUrl; ApiKey = $env:NSP_API_KEY; Days = $Days
+        ODataScriptPath = (Join-Path $PSScriptRoot "ReportOData.ps1"); Stopwatch = $progressClock
+    }
+    if ($NoComparison) { $reportArguments.NoComparison = $true } else { $reportArguments.ComparisonDays = $ComparisonDays }
+    $reportData = Get-NspODataReportDataWithProgress @reportArguments
     Write-NspReportProgress -Status "HTML-Bericht erstellen" -Stopwatch $progressClock
     $currentStart = $reportData.Current.StartUtc.ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
     $currentEnd = $reportData.Current.EndUtc.AddDays(-1).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
-    $previousStart = $reportData.Comparison.StartUtc.ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
-    $previousEnd = $reportData.Comparison.EndUtc.AddDays(-1).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
 
     $kpis = New-NspKpiCards $reportData -Design $Template
     $overview = if ($Template -ne "NSP-Classic") { New-NspOverview $reportData -Design $Template } else { "" }
@@ -760,9 +807,19 @@ try {
     [void](Get-NspEmbeddedLogo $templateHtml)
 
     $currentRange = "$currentStart bis einschließlich $currentEnd (UTC)"
-    $previousRange = "$previousStart bis einschließlich $previousEnd (UTC)"
+    if ($null -ne $reportData.Comparison) {
+        $previousStart = $reportData.Comparison.StartUtc.ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
+        $previousEnd = $reportData.Comparison.EndUtc.AddDays(-1).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
+        $previousRange = "$previousStart bis einschließlich $previousEnd (UTC)"
+        $templateHtml = $templateHtml.Replace("<!-- BEGIN_COMPARISON -->", "").Replace("<!-- END_COMPARISON -->", "")
+        $templateHtml = $templateHtml.Replace("{{PREVIOUS_RANGE}}", (ConvertTo-NspHtml $previousRange))
+    }
+    else {
+        $templateHtml = [regex]::Replace($templateHtml, '(?s)<!-- BEGIN_COMPARISON -->.*?<!-- END_COMPARISON -->', '')
+    }
     $templateHtml = $templateHtml.Replace("{{CURRENT_RANGE}}", (ConvertTo-NspHtml $currentRange))
-    $templateHtml = $templateHtml.Replace("{{PREVIOUS_RANGE}}", (ConvertTo-NspHtml $previousRange))
+    $roundingNote = if ($null -ne $reportData.Comparison) { "Prozentwerte und Änderungen werden vor der Anzeige gerundet; Berechnungen verwenden ungerundete Werte." } else { "Prozentwerte werden vor der Anzeige gerundet; Berechnungen verwenden ungerundete Werte." }
+    $templateHtml = $templateHtml.Replace("{{ROUNDING_NOTE}}", $roundingNote)
     $templateHtml = $templateHtml.Replace("{{GENERATED_AT}}", (ConvertTo-NspHtml $reportData.GeneratedAtUtc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", [Globalization.CultureInfo]::InvariantCulture)))
     $templateHtml = $templateHtml.Replace("{{KPI_CARDS}}", $kpis)
     $templateHtml = $templateHtml.Replace("{{OVERVIEW}}", $overview)

@@ -18,11 +18,11 @@ Remove-Item Function:\Write-Progress
 $fixturePath = Join-Path $env:TEMP ("nsp-progress-test-" + [guid]::NewGuid().ToString("N") + ".ps1")
 $fixture = @'
 function Get-NspODataReportData {
-    param($BaseUrl, $ApiKey, $Days)
+    param($BaseUrl, $ApiKey, $Days, $ComparisonDays, [switch] $NoComparison)
     if ($ApiKey -eq "failure") { throw "fixture request failed" }
     Write-Progress -Activity "NoSpamProxy-Bericht" -Status "Aktueller Zeitraum: Sandbox-Analyse"
     Start-Sleep -Milliseconds 2300
-    return [pscustomobject]@{ Days = $Days; Nested = @{ Value = 42 } }
+    return [pscustomobject]@{ Days = $Days; ComparisonDays = $ComparisonDays; NoComparison = [bool]$NoComparison; Nested = @{ Value = 42 } }
 }
 '@
 
@@ -36,11 +36,14 @@ try {
     $script:updates = [System.Collections.Generic.List[object]]::new()
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $report = Get-NspODataReportDataWithProgress -BaseUrl "https://example.invalid" -ApiKey "fixture" `
-        -Days 7 -ODataScriptPath $fixturePath -Stopwatch $clock
-    Assert-True ($report.Days -eq 7 -and $report.Nested.Value -eq 42) "Worker must return the original report data."
+        -Days 7 -ComparisonDays 14 -ODataScriptPath $fixturePath -Stopwatch $clock
+    Assert-True ($report.Days -eq 7 -and $report.ComparisonDays -eq 14 -and -not $report.NoComparison -and $report.Nested.Value -eq 42) "Worker must forward the custom comparison and return the original report data."
     $stepUpdates = @($script:updates | Where-Object { $_.Status -eq "Aktueller Zeitraum: Sandbox-Analyse" })
     Assert-True ($stepUpdates.Count -ge 2) "A long-running request must refresh its current step."
     Assert-True (($stepUpdates[-1].Elapsed - $stepUpdates[0].Elapsed) -ge 1) "Elapsed time must advance while the request is running."
+    $report = Get-NspODataReportDataWithProgress -BaseUrl "https://example.invalid" -ApiKey "fixture" `
+        -Days 7 -NoComparison -ODataScriptPath $fixturePath -Stopwatch ([Diagnostics.Stopwatch]::StartNew())
+    Assert-True ($report.NoComparison) "Worker must forward disabled comparison."
 
     $failed = $false
     try {
@@ -54,16 +57,19 @@ try {
     Assert-True $failed "Worker failures must be surfaced to the caller."
 
     function Get-NspODataReportData {
-        param($BaseUrl, $ApiKey, $Days)
-        return [pscustomobject]@{ Days = $Days }
+        param($BaseUrl, $ApiKey, $Days, $ComparisonDays, [switch] $NoComparison)
+        return [pscustomobject]@{ Days = $Days; ComparisonDays = $ComparisonDays; NoComparison = [bool]$NoComparison }
     }
     $savedPreference = $ProgressPreference
     try {
         $ProgressPreference = "SilentlyContinue"
         $before = $script:updates.Count
         $report = Get-NspODataReportDataWithProgress -BaseUrl "https://example.invalid" -ApiKey "fixture" `
-            -Days 3 -ODataScriptPath "not-used" -Stopwatch ([Diagnostics.Stopwatch]::StartNew())
-        Assert-True ($report.Days -eq 3 -and $script:updates.Count -eq $before) "Suppressed progress must use the normal data path without updates."
+            -Days 3 -ComparisonDays 5 -ODataScriptPath "not-used" -Stopwatch ([Diagnostics.Stopwatch]::StartNew())
+        Assert-True ($report.Days -eq 3 -and $report.ComparisonDays -eq 5 -and $script:updates.Count -eq $before) "Suppressed progress must forward the custom comparison without updates."
+        $report = Get-NspODataReportDataWithProgress -BaseUrl "https://example.invalid" -ApiKey "fixture" `
+            -Days 3 -NoComparison -ODataScriptPath "not-used" -Stopwatch ([Diagnostics.Stopwatch]::StartNew())
+        Assert-True ($report.NoComparison) "Suppressed progress must forward disabled comparison."
     }
     finally { $ProgressPreference = $savedPreference }
 }

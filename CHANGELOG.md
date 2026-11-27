@@ -1,3 +1,14 @@
+## [0.5.0] - Build 20261127.6 - 2026-11-27
+
+### Neu
+- `-ComparisonDays` legt die Länge des unmittelbar vorhergehenden Vergleichszeitraums unabhängig vom aktuellen Zeitraum fest.
+- `-NoComparison` deaktiviert die Vergleichsabfrage und entfernt Vergleichswerte, Differenzen und Änderungen aus allen drei Berichtsvorlagen.
+- Ohne zusätzliche Parameter bleibt der Vergleich aktiviert und genauso lang wie der mit `-Days` gewählte aktuelle Zeitraum.
+
+### Hinweise
+- Unterschiedlich lange Zeiträume werden anhand ihrer Gesamtzahlen verglichen, nicht auf Tagesdurchschnitte normiert.
+- `-NoComparison` und `-ComparisonDays` können nicht gleichzeitig angegeben werden.
+
 ## [0.4.2] - Build 20261127.5 - 2026-11-27
 
 ### Optimiert

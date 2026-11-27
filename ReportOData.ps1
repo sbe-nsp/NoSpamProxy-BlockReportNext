@@ -31,24 +31,33 @@ function Get-NspODataReportDataWithProgress {
         [Parameter(Mandatory = $true)][string] $ApiKey,
         [Parameter(Mandatory = $true)][int] $Days,
         [Parameter(Mandatory = $true)][string] $ODataScriptPath,
-        [Parameter(Mandatory = $true)][System.Diagnostics.Stopwatch] $Stopwatch
+        [Parameter(Mandatory = $true)][System.Diagnostics.Stopwatch] $Stopwatch,
+        [ValidateRange(1, 2147483647)][int] $ComparisonDays = $Days,
+        [switch] $NoComparison
     )
 
+    if ($NoComparison -and $PSBoundParameters.ContainsKey("ComparisonDays")) {
+        throw "-NoComparison cannot be combined with -ComparisonDays."
+    }
     if ($ProgressPreference -in @("SilentlyContinue", "Ignore")) {
-        return Get-NspODataReportData -BaseUrl $BaseUrl -ApiKey $ApiKey -Days $Days
+        $arguments = @{ BaseUrl = $BaseUrl; ApiKey = $ApiKey; Days = $Days }
+        if ($NoComparison) { $arguments.NoComparison = $true } else { $arguments.ComparisonDays = $ComparisonDays }
+        return Get-NspODataReportData @arguments
     }
 
     $worker = [PowerShell]::Create()
     $async = $null
     try {
         [void]$worker.AddScript({
-            param($Path, $Url, $Key, $PeriodDays)
+            param($Path, $Url, $Key, $PeriodDays, $CompareDays, $SkipComparison)
             $ErrorActionPreference = "Stop"
             $ProgressPreference = "Continue"
             . $Path
             $script:NspODataProgressEnabled = $true
-            Get-NspODataReportData -BaseUrl $Url -ApiKey $Key -Days $PeriodDays
-        }.ToString()).AddArgument($ODataScriptPath).AddArgument($BaseUrl).AddArgument($ApiKey).AddArgument($Days)
+            $arguments = @{ BaseUrl = $Url; ApiKey = $Key; Days = $PeriodDays }
+            if ($SkipComparison) { $arguments.NoComparison = $true } else { $arguments.ComparisonDays = $CompareDays }
+            Get-NspODataReportData @arguments
+        }.ToString()).AddArgument($ODataScriptPath).AddArgument($BaseUrl).AddArgument($ApiKey).AddArgument($Days).AddArgument($ComparisonDays).AddArgument([bool]$NoComparison)
         $async = $worker.BeginInvoke()
         $nextProgress = 0
         $status = "OData-Abfrage wird vorbereitet"
@@ -915,20 +924,29 @@ function Get-NspODataReportData {
     param(
         [Parameter(Mandatory = $true)][string] $BaseUrl,
         [Parameter(Mandatory = $true)][string] $ApiKey,
-        [ValidateRange(1, 2147483647)][int] $Days = 14
+        [ValidateRange(1, 2147483647)][int] $Days = 14,
+        [ValidateRange(1, 2147483647)][int] $ComparisonDays = $Days,
+        [switch] $NoComparison
     )
 
+    if ($NoComparison -and $PSBoundParameters.ContainsKey("ComparisonDays")) {
+        throw "-NoComparison cannot be combined with -ComparisonDays."
+    }
     $todayUtc = [DateTime]::UtcNow.Date
-    $maxDays = [int][Math]::Floor(($todayUtc - [DateTime]::MinValue).TotalDays / 2)
-    if ($Days -gt $maxDays) { throw "The -Days value is too large to calculate two valid UTC periods." }
+    $requiredDays = [long]$Days + $(if ($NoComparison) { 0 } else { [long]$ComparisonDays })
+    $availableDays = [long][Math]::Floor(($todayUtc - [DateTime]::MinValue).TotalDays)
+    if ($requiredDays -gt $availableDays) { throw "The requested days are too large to calculate valid UTC periods." }
     $currentStart = $todayUtc.AddDays(-$Days)
-    $comparisonStart = $currentStart.AddDays(-$Days)
     Write-NspODataProgress "Verbindung vorbereiten"
     Initialize-NspOData -BaseUrl $BaseUrl -ApiKey $ApiKey
     $script:NspODataProgressPeriod = "Aktueller Zeitraum"
     $current = Get-NspODataPeriodReportData -StartUtc $currentStart -EndUtc $todayUtc
-    $script:NspODataProgressPeriod = "Vergleichszeitraum"
-    $comparison = Get-NspODataPeriodReportData -StartUtc $comparisonStart -EndUtc $currentStart
+    $comparison = $null
+    if (-not $NoComparison) {
+        $comparisonStart = $currentStart.AddDays(-$ComparisonDays)
+        $script:NspODataProgressPeriod = "Vergleichszeitraum"
+        $comparison = Get-NspODataPeriodReportData -StartUtc $comparisonStart -EndUtc $currentStart
+    }
     $script:NspODataProgressPeriod = "Aktueller Zeitraum"
     Write-NspODataProgress "Empfänger-Rangliste"
     $topSpammers = @(Get-NspTopSpammers -StartUtc $currentStart -EndUtc $todayUtc)

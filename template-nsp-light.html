@@ -85,10 +85,10 @@
 <main class="page">
   <header class="header">
     <div><div class="eyebrow">BlockReport / Analyse</div><h1>Nachrichten im Überblick</h1><p class="subtitle">Nachrichtentracks, Zustellung und Blockierungen im ausgewählten Zeitraum.</p></div>
-    <div class="period"><div><small>Aktuell · UTC</small><strong>{{CURRENT_RANGE}}</strong></div><div><small>Vergleichszeitraum · UTC</small><strong>{{PREVIOUS_RANGE}}</strong></div></div>
+    <div class="period"><div><small>Aktuell · UTC</small><strong>{{CURRENT_RANGE}}</strong></div><!-- BEGIN_COMPARISON --><div><small>Vergleichszeitraum · UTC</small><strong>{{PREVIOUS_RANGE}}</strong></div><!-- END_COMPARISON --></div>
   </header>
   {{KPI_CARDS}}
-  <div class="heading"><h2>Nachrichten &amp; Blockierungen</h2><span>Entwicklung zum Vergleichszeitraum</span></div>
+  <div class="heading"><h2>Nachrichten &amp; Blockierungen</h2><!-- BEGIN_COMPARISON --><span>Entwicklung zum Vergleichszeitraum</span><!-- END_COMPARISON --></div>
   {{OVERVIEW}}
   <div class="heading"><h2>Berichtsdetails</h2><span>Alle Bereiche des Berichts</span></div>
   <div class="report-details">{{REPORT_CONTENT}}</div>

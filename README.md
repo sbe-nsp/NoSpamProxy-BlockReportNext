@@ -4,19 +4,19 @@
 
 <p align="center">
   <strong>NSP-dark (Standard)</strong><br>
-  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.2/docs/report-preview-nsp-dark.png" alt="NSP-dark: Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.5.0/docs/report-preview-nsp-dark.png" alt="NSP-dark: Vorschau des NoSpamProxy-Analyseberichts" width="876">
   <br>
   <strong>NSP-light</strong><br>
-  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.2/docs/report-preview-nsp-light.png" alt="NSP-light: Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.5.0/docs/report-preview-nsp-light.png" alt="NSP-light: Vorschau des NoSpamProxy-Analyseberichts" width="876">
   <br>
   <strong>NSP-Classic</strong><br>
-  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.2/docs/report-preview-nsp-classic.png" alt="NSP-Classic: Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.5.0/docs/report-preview-nsp-classic.png" alt="NSP-Classic: Vorschau des NoSpamProxy-Analyseberichts" width="876">
   <br>
   <sub>Alle Berichtsvorschauen enthalten ausschließlich fiktive Beispieldaten.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.4.2">Release 0.4.2</a> ·
+  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.5.0">Release 0.5.0</a> ·
   <a href="#api-zugang-erstellen">API-Zugang erstellen</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#aufruf">Aufruf</a> ·
@@ -110,7 +110,7 @@ Start-Process $outputPath
 
 ## Berichtsumfang
 
-Der Bericht vergleicht dieselben neun Bereiche in zwei vollständigen, nicht überlappenden und gleich langen Zeiträumen. Standard sind 14 Tage pro Zeitraum; mit `-Days` ist die Länge einstellbar:
+Der Bericht umfasst neun Bereiche. Standardmäßig vergleicht er zwei vollständige, nicht überlappende und gleich lange Zeiträume von je 14 Tagen. Der Vergleich lässt sich deaktivieren oder unabhängig einstellen:
 
 1. Verarbeitete Nachrichtentracks und Zustellstatus
 2. Blockierungsgründe, Filterereignisse und Engine-Aktionen
@@ -124,7 +124,7 @@ Der Bericht vergleicht dieselben neun Bereiche in zwei vollständigen, nicht üb
 
 Zusätzlich enthält der Bericht weiterhin eine Top-10-Liste interner Empfänger dauerhaft oder temporär blockierter Nachrichten. Wo die API eine periodische Kennzahl nicht belegt, zeigt der Report `-` und erklärt die Einschränkung. Erfolgreich abgefragte Nullwerte werden als `0` dargestellt. Prozentänderungen bei einem Vergleichswert von null sind nicht berechenbar und erscheinen als `-`.
 
-Die vier Kennzahlen im Berichtskopf zeigen neben dem Vergleichswert die absolute und prozentuale Veränderung des aktuellen Zeitraums gegenüber dem Vergleichszeitraum. Ein Plus bedeutet einen Anstieg, ein Minus einen Rückgang.
+Bei aktiviertem Vergleich zeigen die vier Kennzahlen im Berichtskopf neben dem Vergleichswert die absolute und prozentuale Veränderung des aktuellen Zeitraums gegenüber dem Vergleichszeitraum. Ein Plus bedeutet einen Anstieg, ein Minus einen Rückgang.
 
 Für die Gestaltung stehen `NSP-dark` (Standard), `NSP-light` und `NSP-Classic` (die bisherige Vorlage) zur Wahl. Mit `-Template NSP-light` oder `-Template NSP-Classic` wird die jeweilige Vorlage für die HTML- und PDF-Berichte verwendet. Die E-Mail selbst enthält nur einen Klartext mit dem aktuellen Berichtszeitraum; die Berichte werden angehängt.
 
@@ -134,7 +134,7 @@ Bei den Anteilen im Bereich „Blockierungsgründe“ zeigen „Differenz“ und
 
 Die MIME-Typen lassen sich im HTML-Bericht einzeln aufklappen und sind zunächst geschlossen. Im PDF sind ihre Details vollständig geöffnet; die Darstellung in E-Mail-Programmen hängt von deren Unterstützung für aufklappbare Bereiche ab.
 
-Die Zeitfilter sind UTC. Bei `-Days 7` umfasst der aktuelle Zeitraum die letzten sieben vollständigen UTC-Tage; der Vergleich umfasst die unmittelbar davorliegenden sieben Tage. Der heutige UTC-Tag ist ausgeschlossen. Allgemein gilt: aktuell `[heute-Days, heute)`, Vergleich `[heute-2×Days, heute-Days)`; Start ist inklusiv, Ende exklusiv.
+Die Zeitfilter sind UTC. Bei `-Days 7` umfasst der aktuelle Zeitraum die letzten sieben vollständigen UTC-Tage; der Vergleich umfasst standardmäßig die unmittelbar davorliegenden sieben Tage. `-ComparisonDays` legt seine Länge unabhängig fest. Allgemein gilt: aktuell `[heute-Days, heute)`, Vergleich `[heute-Days-ComparisonDays, heute-Days)`; Start ist inklusiv, Ende exklusiv. Der heutige UTC-Tag ist ausgeschlossen. Bei unterschiedlichen Zeitspannen werden Gesamtzahlen direkt und nicht auf Tagesdurchschnitte normiert verglichen; die Periodenlänge beeinflusst daher die Veränderung. Mit `-NoComparison` werden weder Vergleichsdaten abgefragt noch Vergleiche im Bericht dargestellt. `-NoComparison` und `-ComparisonDays` können nicht kombiniert werden.
 
 OData-Ergebnisse werden ohne feste Seitenzahlbegrenzung abgerufen. Filter- und Aktionszahlen werden auf dem Server aggregiert, Analyseoperationen seitenweise ausgewertet. Bei der Empfängerrangliste werden normalerweise nur für die Top 10 relevante Gruppen verarbeitet; Gleichstände an der Grenze werden vollständig berücksichtigt. Dadurch müssen bei großen Datenmengen weniger Einzelzeilen übertragen und zwischengespeichert werden; Laufzeit und Speicherbedarf hängen dennoch von Datenmenge und API-Server ab. Wiederholte Fortsetzungslinks oder erkennbare wiederholte Seiten führen zu einem Fehler statt zu einem unvollständigen Bericht.
 
@@ -151,7 +151,7 @@ OData-Ergebnisse werden ohne feste Seitenzahlbegrenzung abgerufen. Filter- und A
 
 ## Installation
 
-Das [Anwenderpaket 0.4.2](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.4.2/NoSpamProxy-BlockReportNext-v0.4.2-build20261127.5.zip) herunterladen und entpacken. Es enthält die zwei PowerShell-Dateien, alle drei HTML-Vorlagen und die README.
+Das [Anwenderpaket 0.5.0](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.5.0/NoSpamProxy-BlockReportNext-v0.5.0-build20261127.6.zip) herunterladen und entpacken. Es enthält die zwei PowerShell-Dateien, alle drei HTML-Vorlagen und die README.
 
 Alternativ den `master`-Branch klonen:
 
@@ -202,6 +202,13 @@ Für sieben Tage und die sieben Tage davor:
 
 ```powershell
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -NoSend -OutputPath 'C:\Reports\NoSpamProxy-Report.html'
+```
+
+Sieben Tage mit den 14 Tagen davor vergleichen oder den Vergleich ausschalten:
+
+```powershell
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -ComparisonDays 14 -NoSend -OutputPath 'C:\Reports\NoSpamProxy-Report.html'
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -NoComparison -NoSend -OutputPath 'C:\Reports\NoSpamProxy-Report.html'
 ```
 
 Die helle oder klassische Vorlage auswählen:
@@ -318,7 +325,9 @@ Wähle die Aufgabe in der Aufgabenplanungsbibliothek aus und klicke auf **Ausfü
 | `-ReportRecipients` | Beispieladresse | BCC-Empfänger. |
 | `-ReportSubject` | `NoSpamProxy: Permanently blocked report` | E-Mail-Betreff. |
 | `-ODataBaseUrl` | erforderlich | HTTPS-Basisadresse der eigenen NoSpamProxy Web App und Service-API; für `-Help` nicht erforderlich. |
-| `-Days` | `14` | Anzahl vollständiger UTC-Tage pro Zeitraum; mindestens `1`. Der Vergleich umfasst die direkt davorliegenden Tage. |
+| `-Days` | `14` | Anzahl vollständiger UTC-Tage im aktuellen Zeitraum; mindestens `1`. |
+| `-ComparisonDays` | Wert von `-Days` | Anzahl der unmittelbar vorhergehenden vollständigen UTC-Tage für den Vergleich; mindestens `1`. Nicht mit `-NoComparison` kombinierbar. |
+| `-NoComparison` | aus | Vergleichsabfrage und Vergleichsdarstellung vollständig deaktivieren. |
 | `-NoSend` | aus | Bericht ohne SMTP-Versand erstellen. |
 | `-OutputPath` | nicht gesetzt | Zieldatei für HTML; nur zusammen mit `-NoSend` zulässig und dann erforderlich. |
 | `-Help` | aus | Zeigt die ausführliche Hilfe ohne API-Aufruf oder E-Mail-Versand. |
@@ -332,7 +341,7 @@ Für geplante Ausführungen müssen die eigene OData-Basis-URL und die SMTP-Para
 - `IsQuarantined=null` bleibt ein eigener, nicht gemeldeter Zustand und wird nicht als `false` behandelt.
 - Gesehene und als bösartig markierte URLs werden anhand ihres Hashes in Nachrichten des jeweiligen Zeitraums eindeutig gezählt. Fehlt ein URL-Hash, erscheinen diese Zahlen als `-`. Klicks mit bösartiger Bewertung werden separat anhand von `UrlVisits.VisitedOn` gezählt und müssen nicht zu den im selben Zeitraum gesehenen URLs gehören.
 - Ein `Scl`-Wert oder ein Filtername allein belegt keine 32GUARDS-Zuordnung. Recall wird stattdessen anhand eindeutiger `MailId`-Werte mit `WasRecalled=true` gezählt.
-- MalwareScan-Operationen, Analyseergebnisse und tatsächliche Malware-Funde sind getrennte Größen. Malware-Kennzahlen mit identischen Werten in beiden Zeiträumen können in einer Zeile zusammengefasst werden. Sandbox-Funde erfordern einen expliziten `Infected`-Ergebnisstatus; unbekannte Ergebnisse zählen nicht als bestätigter Fund.
+- MalwareScan-Operationen, Analyseergebnisse und tatsächliche Malware-Funde sind getrennte Größen. Malware-Kennzahlen mit identischen Werten können in einer Zeile zusammengefasst werden; bei aktiviertem Vergleich müssen die Werte in beiden Zeiträumen identisch sein. Sandbox-Funde erfordern einen expliziten `Infected`-Ergebnisstatus; unbekannte Ergebnisse zählen nicht als bestätigter Fund.
 - Werden Nachrichtentracking-Details nach Ablauf der Aufbewahrungsfrist gelöscht, fehlen die zugehörigen Analysevorgänge im Bericht. Eine `0` bei bestätigten Sandbox-Funden bedeutet daher nicht, dass im gesamten Zeitraum keine Funde aufgetreten sind.
 - DeepFile-Analysevorgänge sind keine Dateizählung; bestätigte Nachrichtentracks sind nicht zwingend eindeutige E-Mails.
 
@@ -342,4 +351,4 @@ Die API wird ausschließlich mit GET-Abfragen verwendet. API-Antworten und Empf�
 
 ## Version
 
-Aktuelle Version: **0.4.2, Build 20261127.5 vom 27.11.2026**. Die Skriptversion ist im Bericht sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.4.2).
+Aktuelle Version: **0.5.0, Build 20261127.6 vom 27.11.2026**. Die Skriptversion ist im Bericht sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.5.0).

@@ -99,9 +99,9 @@
     <div class="top"><div class="breadcrumbs">BLOCKREPORT / <strong>Übersicht</strong></div><span class="badge">NSP-dark</span></div>
     <header class="hero" id="overview">
       <div><div class="eyebrow">Analysebericht</div><h1>Ihr Nachrichten-Cockpit</h1><p>Nachrichtentracks und Analyseergebnisse für den ausgewählten Zeitraum.</p></div>
-      <div class="period"><div><small>Aktuell · UTC</small><strong>{{CURRENT_RANGE}}</strong></div><div><small>Vergleichszeitraum · UTC</small><strong>{{PREVIOUS_RANGE}}</strong></div></div>
+      <div class="period"><div><small>Aktuell · UTC</small><strong>{{CURRENT_RANGE}}</strong></div><!-- BEGIN_COMPARISON --><div><small>Vergleichszeitraum · UTC</small><strong>{{PREVIOUS_RANGE}}</strong></div><!-- END_COMPARISON --></div>
     </header>
-    <div class="section-heading"><h2>Im Überblick</h2><span>Vergleich mit dem vorherigen Zeitraum</span></div>
+    <div class="section-heading"><h2>Im Überblick</h2><!-- BEGIN_COMPARISON --><span>Vergleich mit dem vorherigen Zeitraum</span><!-- END_COMPARISON --></div>
     {{KPI_CARDS}}
     <div class="section-heading"><h2>Nachrichten &amp; Blockierungen</h2><span>Aktueller Zeitraum</span></div>
     {{OVERVIEW}}
