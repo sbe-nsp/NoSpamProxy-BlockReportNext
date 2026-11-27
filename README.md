@@ -3,13 +3,13 @@
 **Ein kompakter PowerShell-Analysebericht für NoSpamProxy.** Alle Daten werden lesend über die OData-Service-API abgerufen – ohne SQL-Zugriff.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.2.0/docs/report-preview.png" alt="Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.3.0/docs/report-preview.png" alt="Vorschau des NoSpamProxy-Analyseberichts" width="876">
   <br>
   <sub>Berichtsvorschau mit fiktiven Beispieldaten.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.2.0">Release 0.2.0</a> ·
+  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.3.0">Release 0.3.0</a> ·
   <a href="#api-zugang-erstellen">API-Zugang erstellen</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#aufruf">Aufruf</a> ·
@@ -83,7 +83,9 @@ Das [Anwenderpaket installieren](#installation), falls noch nicht geschehen. Im 
 Set-Location 'C:\Pfad\zum\NoSpamProxy-BlockReport'
 ```
 
-Die eigene HTTPS-Basis-URL der NoSpamProxy-Service-API eingeben und den Bericht ohne E-Mail-Versand erstellen:
+Für `-ODataBaseUrl` die HTTPS-Basisadresse der bereits eingerichteten NoSpamProxy Web App verwenden: dieselbe Adresse, mit der du die Web App im Browser aufrufst, gegebenenfalls einschließlich Port. Gib nur die Basisadresse ohne nachfolgenden Seiten- oder API-Pfad an.
+
+Die eigene HTTPS-Basis-URL eingeben und den Bericht ohne E-Mail-Versand erstellen:
 
 ```powershell
 $odataBaseUrl = Read-Host 'HTTPS-Basis-URL der eigenen NoSpamProxy-Service-API'
@@ -99,7 +101,7 @@ Start-Process $outputPath
 
 ## Berichtsumfang
 
-Der Bericht vergleicht dieselben neun Bereiche in zwei vollständigen, nicht überlappenden 14-Tage-Zeiträumen:
+Der Bericht vergleicht dieselben neun Bereiche in zwei vollständigen, nicht überlappenden und gleich langen Zeiträumen. Standard sind 14 Tage pro Zeitraum; mit `-Days` ist die Länge einstellbar:
 
 1. Verarbeitete Nachrichtentracks und Zustellstatus
 2. Blockierungsgründe, Filterereignisse und Engine-Aktionen
@@ -111,15 +113,17 @@ Der Bericht vergleicht dieselben neun Bereiche in zwei vollständigen, nicht üb
 8. 32Guards DeepFile Analyzer
 9. Häufigste MIME-Typen und Status der zugehörigen Nachricht
 
-Zusätzlich enthält der Bericht weiterhin eine Top-10-Liste interner Empfänger dauerhaft oder temporär blockierter Nachrichten. Wo die API eine periodische Kennzahl nicht belegt, zeigt der Report `n/a` und erklärt die Einschränkung. Erfolgreich abgefragte Nullwerte werden als `0` dargestellt. Prozentänderungen bei einem Vergleichswert von null sind nicht berechenbar und erscheinen als `n/a`.
+Zusätzlich enthält der Bericht weiterhin eine Top-10-Liste interner Empfänger dauerhaft oder temporär blockierter Nachrichten. Wo die API eine periodische Kennzahl nicht belegt, zeigt der Report `-` und erklärt die Einschränkung. Erfolgreich abgefragte Nullwerte werden als `0` dargestellt. Prozentänderungen bei einem Vergleichswert von null sind nicht berechenbar und erscheinen als `-`.
 
-Differenzen zwischen Anteilen werden als Prozentpunkte (`PP`) ausgewiesen; die Spalte „Änderung“ zeigt die relative Veränderung. Die Blockierungsgründe `LoopDetected` und `None` werden nicht als Zeilen angezeigt, zählen aber weiterhin zum Nenner der Anteile. Filtertreffer werden kompakt als Ereignisse mit positiver Bewertung gezeigt; sie belegen für sich keine ursächliche Blockierung.
+Die vier Kennzahlen im Berichtskopf zeigen neben dem Vergleichswert die absolute und prozentuale Veränderung des aktuellen Zeitraums gegenüber dem Vergleichszeitraum. Ein Plus bedeutet einen Anstieg, ein Minus einen Rückgang.
+
+Bei den Anteilen im Bereich „Blockierungsgründe“ zeigen „Differenz“ und „Änderung“ die relative Veränderung in Prozent. In anderen Bereichen werden Differenzen zwischen Anteilen als Prozentpunkte (`PP`) ausgewiesen; „Änderung“ zeigt dort die relative Veränderung. Die Blockierungsgründe `LoopDetected` und `None` werden nicht als Zeilen angezeigt, zählen aber weiterhin zum Nenner der Anteile. Filtertreffer werden kompakt als Ereignisse mit positiver Bewertung gezeigt; sie belegen für sich keine ursächliche Blockierung.
 
 `Policy` ist ein API-Ablehnungsgrund, der als „Richtlinie / Vorgabe“ übersetzt wird. Der Wert allein nennt weder die konkrete Regel noch die auslösende Aktion; diese lassen sich im Nachrichtentracking prüfen. `SpamOrVirus` allein belegt keinen bestätigten Malware-Fund.
 
 Die MIME-Typen lassen sich im HTML-Bericht einzeln aufklappen und sind zunächst geschlossen. Im PDF sind ihre Details vollständig geöffnet; die Darstellung in E-Mail-Programmen hängt von deren Unterstützung für aufklappbare Bereiche ab.
 
-Die Zeitfilter sind UTC: aktueller Zeitraum `[heute-14 Tage, heute)`, Vergleichszeitraum `[heute-28 Tage, heute-14 Tage)`. Start ist inklusiv, Ende exklusiv.
+Die Zeitfilter sind UTC. Bei `-Days 7` umfasst der aktuelle Zeitraum die letzten sieben vollständigen UTC-Tage; der Vergleich umfasst die unmittelbar davorliegenden sieben Tage. Der heutige UTC-Tag ist ausgeschlossen. Allgemein gilt: aktuell `[heute-Days, heute)`, Vergleich `[heute-2×Days, heute-Days)`; Start ist inklusiv, Ende exklusiv.
 
 ## Voraussetzungen
 
@@ -133,7 +137,7 @@ Die Zeitfilter sind UTC: aktueller Zeitraum `[heute-14 Tage, heute)`, Vergleichs
 
 ## Installation
 
-Das [Anwenderpaket](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.2.0/NoSpamProxy-BlockReportNext-v0.2.0-build20261127.1.zip) herunterladen und entpacken. Es enthält nur `Get-PermanentlyBlocked.ps1`, `ReportOData.ps1`, `template.html` und diese README.
+Das [Anwenderpaket](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.3.0/NoSpamProxy-BlockReportNext-v0.3.0-build20261127.2.zip) herunterladen und entpacken. Es enthält nur `Get-PermanentlyBlocked.ps1`, `ReportOData.ps1`, `template.html` und diese README.
 
 Alternativ den `master`-Branch klonen:
 
@@ -180,6 +184,12 @@ HTML-Bericht erstellen, ohne eine E-Mail zu senden:
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -NoSend -OutputPath 'C:\Reports\NoSpamProxy-Report.html'
 ```
 
+Für sieben Tage und die sieben Tage davor:
+
+```powershell
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -NoSend -OutputPath 'C:\Reports\NoSpamProxy-Report.html'
+```
+
 HTML und PDF per SMTP versenden:
 
 ```powershell
@@ -191,11 +201,11 @@ HTML und PDF per SMTP versenden:
   -ReportType Both
 ```
 
-Ersetze `https://nospamproxy.example.com` in den Beispielen durch die HTTPS-Basis-URL deiner NoSpamProxy-Service-API. Die Empfänger werden als BCC eingetragen. Beim Versand muss mindestens ein SMTP-Relay und ein Empfänger angegeben werden. Die voreingestellten Beispielwerte sind nicht produktiv verwendbar.
+Ersetze `https://nospamproxy.example.com` in den Beispielen durch die HTTPS-Basisadresse deiner NoSpamProxy Web App, mit der du sie im Browser öffnest. Die Empfänger werden als BCC eingetragen. Beim Versand muss mindestens ein SMTP-Relay und ein Empfänger angegeben werden. Die voreingestellten Beispielwerte sind nicht produktiv verwendbar.
 
 ## Wöchentliche Ausführung mit der Aufgabenplanung
 
-Dieses Beispiel versendet den Bericht einmal pro Woche per SMTP. Der Bericht vergleicht weiterhin zwei vollständige 14-Tage-Zeiträume; der wöchentliche Zeitplan ändert diese Zeiträume nicht.
+Dieses Beispiel versendet den Bericht einmal pro Woche per SMTP. Ohne `-Days` vergleicht der Bericht weiterhin zwei vollständige 14-Tage-Zeiträume; der wöchentliche Zeitplan allein ändert diese Zeiträume nicht. Für einen Wochenvergleich kann im Startskript beispielsweise `-ReportType Both -Days 7` angegeben werden.
 
 ### 1. Voraussetzungen vorbereiten
 
@@ -285,7 +295,8 @@ Wähle die Aufgabe in der Aufgabenplanungsbibliothek aus und klicke auf **Ausfü
 | `-ReportSender` | Beispieladresse | Absenderadresse. |
 | `-ReportRecipients` | Beispieladresse | BCC-Empfänger. |
 | `-ReportSubject` | `NoSpamProxy: Permanently blocked report` | E-Mail-Betreff. |
-| `-ODataBaseUrl` | erforderlich | HTTPS-Basis-URL der eigenen Service-API; für `-Help` nicht erforderlich. |
+| `-ODataBaseUrl` | erforderlich | HTTPS-Basisadresse der eigenen NoSpamProxy Web App und Service-API; für `-Help` nicht erforderlich. |
+| `-Days` | `14` | Anzahl vollständiger UTC-Tage pro Zeitraum; mindestens `1`. Der Vergleich umfasst die direkt davorliegenden Tage. |
 | `-NoSend` | aus | Bericht ohne SMTP-Versand erstellen. |
 | `-OutputPath` | nicht gesetzt | Zieldatei für HTML; nur zusammen mit `-NoSend` zulässig und dann erforderlich. |
 | `-Help` | aus | Zeigt die ausführliche Hilfe ohne API-Aufruf oder E-Mail-Versand. |
@@ -295,11 +306,12 @@ Für geplante Ausführungen müssen die eigene OData-Basis-URL und die SMTP-Para
 ## Grenzen der API-Daten
 
 - Aktionen und Filter werden als Ereignisse gezählt; eindeutige `MailId`-Werte werden getrennt ausgewiesen. Diese Werte sind nicht additiv als Nachrichtensumme zu interpretieren.
-- Die Attachment-Entität enthält `MimeType`, `IsQuarantined` und die verknüpfte Nachricht, aber keinen anhangspezifischen ContentFiltering-Entscheid. Temporär und permanent abgelehnte Anhänge sind daher `n/a`, nicht eine aus Nachrichtenereignissen abgeleitete Zahl.
+- Die Attachment-Entität enthält `MimeType`, `IsQuarantined` und die verknüpfte Nachricht, aber keinen anhangspezifischen ContentFiltering-Entscheid. Temporär und permanent abgelehnte Anhänge sind daher `-`, nicht eine aus Nachrichtenereignissen abgeleitete Zahl.
 - `IsQuarantined=null` bleibt ein eigener, nicht gemeldeter Zustand und wird nicht als `false` behandelt.
-- Gesehene und als bösartig markierte URLs werden anhand ihres Hashes in Nachrichten des jeweiligen Zeitraums eindeutig gezählt. Fehlt ein URL-Hash, erscheinen diese Zahlen als `n/a`. Klicks mit bösartiger Bewertung werden separat anhand von `UrlVisits.VisitedOn` gezählt und müssen nicht zu den im selben Zeitraum gesehenen URLs gehören.
+- Gesehene und als bösartig markierte URLs werden anhand ihres Hashes in Nachrichten des jeweiligen Zeitraums eindeutig gezählt. Fehlt ein URL-Hash, erscheinen diese Zahlen als `-`. Klicks mit bösartiger Bewertung werden separat anhand von `UrlVisits.VisitedOn` gezählt und müssen nicht zu den im selben Zeitraum gesehenen URLs gehören.
 - Ein `Scl`-Wert oder ein Filtername allein belegt keine 32GUARDS-Zuordnung. Recall wird stattdessen anhand eindeutiger `MailId`-Werte mit `WasRecalled=true` gezählt.
 - MalwareScan-Operationen, Analyseergebnisse und tatsächliche Malware-Funde sind getrennte Größen. Malware-Kennzahlen mit identischen Werten in beiden Zeiträumen können in einer Zeile zusammengefasst werden. Sandbox-Funde erfordern einen expliziten `Infected`-Ergebnisstatus; unbekannte Ergebnisse zählen nicht als bestätigter Fund.
+- Werden Nachrichtentracking-Details nach Ablauf der Aufbewahrungsfrist gelöscht, fehlen die zugehörigen Analysevorgänge im Bericht. Eine `0` bei bestätigten Sandbox-Funden bedeutet daher nicht, dass im gesamten Zeitraum keine Funde aufgetreten sind.
 - DeepFile-Analysevorgänge sind keine Dateizählung; bestätigte Nachrichtentracks sind nicht zwingend eindeutige E-Mails.
 
 ## Sicherheit und Datenschutz
@@ -308,4 +320,4 @@ Die API wird ausschließlich mit GET-Abfragen verwendet. API-Antworten und Empf�
 
 ## Version
 
-Aktuelle Version: **0.2.0, Build 20261127.1 vom 27.11.2026**. Die Skriptversion ist im Berichtskopf sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.2.0).
+Aktuelle Version: **0.3.0, Build 20261127.2 vom 27.11.2026**. Die Skriptversion ist im Berichtskopf sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.3.0).

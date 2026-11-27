@@ -1,3 +1,15 @@
+## [0.3.0] - Build 20261127.2 - 2026-11-27
+
+### Neu
+- `-Days` legt die Anzahl vollständiger UTC-Tage für den aktuellen und den unmittelbar vorhergehenden Vergleichszeitraum fest; ohne Angabe bleiben es jeweils 14 Tage.
+- Die vier Kennzahlen im Berichtskopf zeigen den Vergleichszeitraum sowie die absolute und relative Veränderung mit Vorzeichen.
+
+### Überarbeitet
+- „Zustellung ausstehend“ ist in der Nachrichtenübersicht ausgeblendet; fehlende oder nicht berechenbare Werte erscheinen als `-`.
+- Prozentanteile bei den Blockierungsgründen zeigen in den Spalten „Differenz“ und „Änderung“ die relative Veränderung in Prozent.
+- Die Sandbox-Auswertung weist auf möglicherweise gelöschte Tracking-Details und dadurch fehlende Funde hin.
+- Die Dokumentation erklärt die Web-App-Adresse für `-ODataBaseUrl`; die Berichtsvorschau zeigt fiktive Daten im aktuellen Design.
+
 ## [0.2.0] - Build 20261127.1 - 2026-11-27
 
 ### Neu

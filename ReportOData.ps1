@@ -722,13 +722,16 @@ function Get-NspODataPeriodReportData {
 function Get-NspODataReportData {
     param(
         [Parameter(Mandatory = $true)][string] $BaseUrl,
-        [Parameter(Mandatory = $true)][string] $ApiKey
+        [Parameter(Mandatory = $true)][string] $ApiKey,
+        [ValidateRange(1, 2147483647)][int] $Days = 14
     )
 
-    Initialize-NspOData -BaseUrl $BaseUrl -ApiKey $ApiKey
     $todayUtc = [DateTime]::UtcNow.Date
-    $currentStart = $todayUtc.AddDays(-14)
-    $comparisonStart = $todayUtc.AddDays(-28)
+    $maxDays = [int][Math]::Floor(($todayUtc - [DateTime]::MinValue).TotalDays / 2)
+    if ($Days -gt $maxDays) { throw "The -Days value is too large to calculate two valid UTC periods." }
+    $currentStart = $todayUtc.AddDays(-$Days)
+    $comparisonStart = $currentStart.AddDays(-$Days)
+    Initialize-NspOData -BaseUrl $BaseUrl -ApiKey $ApiKey
     $current = Get-NspODataPeriodReportData -StartUtc $currentStart -EndUtc $todayUtc
     $comparison = Get-NspODataPeriodReportData -StartUtc $comparisonStart -EndUtc $currentStart
     $topSpammers = @(Get-NspTopSpammers -StartUtc $currentStart -EndUtc $todayUtc)

@@ -1,11 +1,12 @@
 ﻿<#
 .SYNOPSIS
-Erstellt einen OData-basierten NoSpamProxy-Bericht für zwei vollständige 14-Tage-Zeiträume.
+Erstellt einen OData-basierten NoSpamProxy-Bericht für zwei gleich lange Zeiträume.
 .DESCRIPTION
 Ruft alle Berichtsdaten ausschließlich lesend über die NoSpamProxy-OData-API ab. Mit -NoSend wird
 der HTML-Bericht lokal gespeichert, ohne eine E-Mail zu versenden. Der PAT muss in NSP_API_KEY stehen.
-Der Bericht vergleicht zwei vollständige 14-Tage-Zeiträume in UTC. Nicht belegbare Kennzahlen
-werden als n/a angezeigt. MIME-Details sind im HTML aufklappbar und im PDF geöffnet.
+Der Bericht vergleicht zwei vollständige, gleich lange Zeiträume in UTC. Standard sind 14 Tage
+pro Zeitraum; -Days legt die Länge fest. Der aktuelle UTC-Tag ist nicht enthalten.
+Nicht belegbare Kennzahlen werden als - angezeigt. MIME-Details sind im HTML aufklappbar und im PDF geöffnet.
 Das eingebettete Logo erfordert keine separate Bilddatei.
 .PARAMETER Help
 Zeigt diese ausführliche Hilfe an, ohne einen Bericht zu erstellen oder die API aufzurufen.
@@ -21,11 +22,14 @@ Eine oder mehrere BCC-Empfänger; die Beispieladresse ersetzen.
 .PARAMETER ReportSubject
 E-Mail-Betreff. Standard: NoSpamProxy: Permanently blocked report.
 .PARAMETER ODataBaseUrl
-Erforderliche HTTPS-Basis-URL der eigenen NoSpamProxy-Service-API.
+Erforderliche HTTPS-Basis-URL der eigenen NoSpamProxy Web App und Service-API.
 .PARAMETER NoSend
 Erstellt den Bericht ohne SMTP-Versand.
 .PARAMETER OutputPath
 Zieldateipfad für den HTML-Bericht; bei -NoSend erforderlich und sonst nicht zulässig.
+.PARAMETER Days
+Anzahl vollständiger UTC-Tage pro Zeitraum. Standard: 14. Der Vergleichszeitraum ist ebenso lang
+und schließt direkt an den aktuellen Zeitraum an. Der heutige UTC-Tag ist ausgeschlossen.
 .EXAMPLE
 .\Get-PermanentlyBlocked.ps1 -Help
 Zeigt die Hilfe an. API-Schlüssel und SMTP-Konfiguration sind hierfür nicht erforderlich.
@@ -41,6 +45,9 @@ try {
 }
 Erstellt einen HTML-Bericht ohne E-Mail-Versand; die PAT-Eingabe erfolgt verdeckt. Die Beispiel-URL
 muss durch die eigene Service-API-Basis-URL ersetzt werden.
+.EXAMPLE
+.\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -Days 7 -NoSend -OutputPath "$env:TEMP\report.html"
+Vergleicht die letzten sieben vollständigen UTC-Tage mit den sieben Tagen davor.
 .EXAMPLE
 .\Get-PermanentlyBlocked.ps1 -ODataBaseUrl 'https://nospamproxy.example.com' -SMTPHosts 'smtp-relay.example.local' -ReportSender 'nsp-report@example.local' -ReportRecipients 'admin@example.local'
 Versendet den Bericht über einen konfigurierten SMTP-Relay. Der PAT muss bereits in NSP_API_KEY stehen.
@@ -58,7 +65,9 @@ param(
     [string] $ODataBaseUrl,
     [switch] $NoSend,
     [string] $OutputPath,
-    [switch] $Help
+    [switch] $Help,
+    [ValidateRange(1, 2147483647)]
+    [int] $Days = 14
 )
 
 if ($Help) {
@@ -68,7 +77,7 @@ if ($Help) {
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
-$reportVersion = "0.2.0 (Build 20261127.1, 2026-11-27)"
+$reportVersion = "0.3.0 (Build 20261127.2, 2026-11-27)"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Web
 . (Join-Path $PSScriptRoot "ReportOData.ps1")
@@ -111,13 +120,13 @@ function New-NspInlineLogoView {
 
 function Format-NspCount {
     param([AllowNull()] $Value)
-    if ($null -eq $Value) { return "n/a" }
+    if ($null -eq $Value) { return "-" }
     return ([long]$Value).ToString("N0", [Globalization.CultureInfo]::GetCultureInfo("de-DE"))
 }
 
 function Format-NspPercent {
     param([AllowNull()] $Value)
-    if ($null -eq $Value) { return "n/a" }
+    if ($null -eq $Value) { return "-" }
     return ([double]$Value).ToString("N2", [Globalization.CultureInfo]::GetCultureInfo("de-DE")) + "%"
 }
 
@@ -141,14 +150,14 @@ function Add-NspCountTableRow {
 
     $safeLabel = ConvertTo-NspHtml $Label
     if ($null -eq $Current -or $null -eq $Previous) {
-        [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspCount $Current)$Unit</td><td class='num'>$(Format-NspCount $Previous)$Unit</td><td class='num'>n/a</td><td class='num'>n/a</td></tr>")
+        [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspCount $Current)$Unit</td><td class='num'>$(Format-NspCount $Previous)$Unit</td><td class='num'>-</td><td class='num'>-</td></tr>")
         return
     }
 
     $currentValue = [double]$Current
     $previousValue = [double]$Previous
     $delta = $currentValue - $previousValue
-    $change = if ($previousValue -eq 0) { "n/a" } else { Format-NspPercent (($delta / $previousValue) * 100) }
+    $change = if ($previousValue -eq 0) { "-" } else { Format-NspPercent (($delta / $previousValue) * 100) }
     $deltaText = if ($delta -gt 0) { "+" + (Format-NspCount $delta) } else { Format-NspCount $delta }
     $deltaText += $Unit
     [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspCount $Current)$Unit</td><td class='num'>$(Format-NspCount $Previous)$Unit</td><td class='num'>$deltaText</td><td class='num'>$change</td></tr>")
@@ -159,18 +168,19 @@ function Add-NspPercentTableRow {
         [Parameter(Mandatory = $true)][System.Text.StringBuilder] $Builder,
         [Parameter(Mandatory = $true)][string] $Label,
         [AllowNull()] $Current,
-        [AllowNull()] $Previous
+        [AllowNull()] $Previous,
+        [switch] $RelativeDifference
     )
 
     $safeLabel = ConvertTo-NspHtml $Label
     if ($null -eq $Current -or $null -eq $Previous) {
-        [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspPercent $Current)</td><td class='num'>$(Format-NspPercent $Previous)</td><td class='num'>n/a</td><td class='num'>n/a</td></tr>")
+        [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspPercent $Current)</td><td class='num'>$(Format-NspPercent $Previous)</td><td class='num'>-</td><td class='num'>-</td></tr>")
         return
     }
 
     $delta = [double]$Current - [double]$Previous
-    $change = if ([double]$Previous -eq 0) { "n/a" } else { Format-NspPercent (($delta / [double]$Previous) * 100) }
-    $deltaText = (Format-NspPercent $delta).Replace("%", " PP")
+    $change = if ([double]$Previous -eq 0) { "-" } else { Format-NspPercent (($delta / [double]$Previous) * 100) }
+    $deltaText = if ($RelativeDifference) { $change } else { (Format-NspPercent $delta).Replace("%", " PP") }
     [void]$Builder.AppendLine("<tr><td>$safeLabel</td><td class='num'>$(Format-NspPercent $Current)</td><td class='num'>$(Format-NspPercent $Previous)</td><td class='num'>$deltaText</td><td class='num'>$change</td></tr>")
 }
 
@@ -230,6 +240,46 @@ function Get-NspPeriodRejectReasonShare {
     return ([double](Get-NspDictionaryCount $Period.RejectReasonCounts $Reason) / $blocked) * 100
 }
 
+function Format-NspKpiComparison {
+    param([AllowNull()] $Current, [AllowNull()] $Previous)
+
+    $previousText = Format-NspCount $Previous
+    if ($null -eq $Current -or $null -eq $Previous) {
+        return "Vergleichszeitraum: $previousText<br>Veränderung: -"
+    }
+
+    $delta = [long]$Current - [long]$Previous
+    $deltaText = Format-NspCount $delta
+    if ($delta -gt 0) { $deltaText = "+$deltaText" }
+    $percentText = if ([long]$Previous -eq 0) { "-" } else {
+        $formatted = Format-NspPercent (([double]$delta / [double]$Previous) * 100)
+        if ($delta -gt 0) { "+$formatted" } else { $formatted }
+    }
+    return "Vergleichszeitraum: $previousText<br>Veränderung: $deltaText ($percentText)"
+}
+
+function New-NspKpiCards {
+    param([Parameter(Mandatory = $true)] $ReportData)
+
+    $current = $ReportData.Current
+    $previous = $ReportData.Comparison
+    $currentBlocked = Get-NspPeriodBlockTotal $current
+    $previousBlocked = Get-NspPeriodBlockTotal $previous
+    $currentPermanent = Get-NspDictionaryCount $current.StatusCounts "PermanentlyBlocked"
+    $previousPermanent = Get-NspDictionaryCount $previous.StatusCounts "PermanentlyBlocked"
+    $currentTemporary = Get-NspDictionaryCount $current.StatusCounts "TemporarilyBlocked"
+    $previousTemporary = Get-NspDictionaryCount $previous.StatusCounts "TemporarilyBlocked"
+
+    return @"
+<table class="metrics" role="presentation"><tr>
+  <td class="metric"><span class="value">$(Format-NspCount $current.MessageTotal)</span><span class="label">Nachrichtentracks aktuell</span><small>$(Format-NspKpiComparison $current.MessageTotal $previous.MessageTotal)</small></td>
+  <td class="metric"><span class="value">$(Format-NspCount $currentPermanent)</span><span class="label">Dauerhaft blockiert</span><small>$(Format-NspKpiComparison $currentPermanent $previousPermanent)</small></td>
+  <td class="metric"><span class="value">$(Format-NspCount $currentTemporary)</span><span class="label">Temporär blockiert</span><small>$(Format-NspKpiComparison $currentTemporary $previousTemporary)</small></td>
+  <td class="metric"><span class="value">$(Format-NspCount $currentBlocked)</span><span class="label">Blockierungen gesamt</span><small>$(Format-NspKpiComparison $currentBlocked $previousBlocked)</small></td>
+</tr></table>
+"@
+}
+
 function New-NspReportContent {
     param([Parameter(Mandatory = $true)] $ReportData)
 
@@ -239,7 +289,6 @@ function New-NspReportContent {
 
     $statusRows = [System.Text.StringBuilder]::new()
     $statusLabels = @{
-        DeliveryPending = "Zustellung ausstehend"
         DispatcherError = "Zustellfehler"
         PartialSuccess = "Teilweise zugestellt"
         PermanentlyBlocked = "Permanent abgewiesen"
@@ -248,9 +297,9 @@ function New-NspReportContent {
         Suppressed = "Zustellung unterdrückt (Duplikate, etc)"
         TemporarilyBlocked = "Temporär abgewiesen"
     }
-    $allStatuses = @("Success", "PermanentlyBlocked", "TemporarilyBlocked", "DispatcherError", "DeliveryPending", "PartialSuccess", "Suppressed", "PutOnHold")
+    $allStatuses = @("Success", "PermanentlyBlocked", "TemporarilyBlocked", "DispatcherError", "PartialSuccess", "Suppressed", "PutOnHold")
     $allStatuses += @($current.StatusCounts.Keys) + @($previous.StatusCounts.Keys)
-    $allStatuses = @($allStatuses | Where-Object { $_ -and $_ -ne "DuplicateDrop" } | Sort-Object -Unique)
+    $allStatuses = @($allStatuses | Where-Object { $_ -and $_ -notin @("DuplicateDrop", "DeliveryPending") } | Sort-Object -Unique)
     foreach ($status in $allStatuses) {
         $statusLabel = if ($statusLabels.ContainsKey($status)) { $statusLabels[$status] } else { $status }
         Add-NspCountTableRow $statusRows $statusLabel `
@@ -272,10 +321,10 @@ function New-NspReportContent {
             (Get-NspDictionaryCount $previous.RejectReasonCounts $reason)
         Add-NspPercentTableRow $reasonRows "$reasonLabel – Anteil an blockierten Nachrichten" `
             (Get-NspPeriodRejectReasonShare $current $reason) `
-            (Get-NspPeriodRejectReasonShare $previous $reason)
+            (Get-NspPeriodRejectReasonShare $previous $reason) -RelativeDifference
     }
     Add-NspPanel $content "2. Blockierungsgründe" $reasonRows.ToString() `
-        "Policy ist ein von der API gemeldeter Ablehnungsgrund (Richtlinie / Vorgabe). Welche Regel oder Aktion die Ablehnung ausgelöst hat, muss im Nachrichtentracking geprüft werden. SpamOrVirus bezeichnet die API-Kategorie für Spam oder Malware und belegt allein keinen bestätigten Malware-Fund. Die Anteile beziehen sich auf alle dauerhaft und temporär blockierten Nachrichtentracks, einschließlich ausgeblendeter Gründe. Differenzen von Anteilen sind in Prozentpunkten (PP) angegeben."
+        "Policy ist ein von der API gemeldeter Ablehnungsgrund (Richtlinie / Vorgabe). Welche Regel oder Aktion die Ablehnung ausgelöst hat, muss im Nachrichtentracking geprüft werden. SpamOrVirus bezeichnet die API-Kategorie für Spam oder Malware und belegt allein keinen bestätigten Malware-Fund. Die Anteile beziehen sich auf alle dauerhaft und temporär blockierten Nachrichtentracks, einschließlich ausgeblendeter Gründe. Bei Anteilen zeigen Differenz und Änderung die relative Veränderung in Prozent."
 
     $filterRows = [System.Text.StringBuilder]::new()
     $filterLabels = @{
@@ -417,20 +466,20 @@ function New-NspReportContent {
     } else { $null }
     Add-NspPercentTableRow $malwareRows "Fundrate (zugeordnete RejectPermanent-Scans / alle MalwareScan-Operationen)" $currentMalwareRate $previousMalwareRate
     Add-NspPanel $content "4. MalwareScan" $malwareRows.ToString() `
-        "Die abgewiesenen E-Mails werden anhand eindeutiger MailIds gezählt. RejectPermanent-Aktionen werden anhand von MessageTrackId mit MalwareScan-Operationen korreliert. Bei unvollständiger Zuordnung werden infizierte Mailteile und Fundrate als n/a angezeigt. Gleiche Werte in beiden Zeiträumen können gemeinsam dargestellt werden; dies belegt keine Eins-zu-eins-Zuordnung der Messgrößen."
+        "Die abgewiesenen E-Mails werden anhand eindeutiger MailIds gezählt. RejectPermanent-Aktionen werden anhand von MessageTrackId mit MalwareScan-Operationen korreliert. Bei unvollständiger Zuordnung werden infizierte Mailteile und Fundrate als - angezeigt. Gleiche Werte in beiden Zeiträumen können gemeinsam dargestellt werden; dies belegt keine Eins-zu-eins-Zuordnung der Messgrößen."
 
     $sandboxRows = [System.Text.StringBuilder]::new()
     Add-NspCountTableRow $sandboxRows "Analysevorgänge" $current.SandboxEvidence.OperationCount $previous.SandboxEvidence.OperationCount
     Add-NspCountTableRow $sandboxRows "Analysevorgänge mit bestätigtem Fund" $current.SandboxEvidence.ConfirmedOperationCount $previous.SandboxEvidence.ConfirmedOperationCount
     Add-NspPanel $content "5. Sandbox-Analyse" $sandboxRows.ToString() `
-        "Ein bestätigter Fund erfordert den expliziten Ergebnisstatus Infected. Eine Ablehnung oder ein unbekanntes Ergebnis allein belegt keinen Malware-Fund."
+        "Ein bestätigter Fund erfordert den expliziten Ergebnisstatus Infected. Eine Ablehnung oder ein unbekanntes Ergebnis allein belegt keinen Malware-Fund. Sind Tracking-Details gelöscht, fehlen diese Vorgänge; ein Wert von 0 belegt daher keine vollständige Abwesenheit von Funden."
 
     $urlRows = [System.Text.StringBuilder]::new()
     Add-NspCountTableRow $urlRows "Unterschiedliche gesehene URLs" $current.ObservedUrls.Total $previous.ObservedUrls.Total
     Add-NspCountTableRow $urlRows "Unterschiedliche als bösartig markierte URLs" $current.ObservedUrls.Malicious $previous.ObservedUrls.Malicious
     Add-NspCountTableRow $urlRows "Klicks mit bösartiger Bewertung" $current.UrlVisitCounts.True $previous.UrlVisitCounts.True
     Add-NspPanel $content "6. URL Safeguard" $urlRows.ToString() `
-        "URLs werden anhand ihres Hashes einmal pro Zeitraum gezählt; die Zuordnung zum Zeitraum erfolgt über das Sendedatum der Nachricht. Bösartige URLs basieren auf der aktuellen API-Bewertung. Klicks zählen Besuchsereignisse mit bösartiger Bewertung anhand des Besuchszeitpunkts und müssen nicht zu den im selben Zeitraum gesehenen URLs gehören. Fehlende URL-Hashes ergeben n/a."
+        "URLs werden anhand ihres Hashes einmal pro Zeitraum gezählt; die Zuordnung zum Zeitraum erfolgt über das Sendedatum der Nachricht. Bösartige URLs basieren auf der aktuellen API-Bewertung. Klicks zählen Besuchsereignisse mit bösartiger Bewertung anhand des Besuchszeitpunkts und müssen nicht zu den im selben Zeitraum gesehenen URLs gehören. Fehlende URL-Hashes ergeben -."
 
     $recallRows = [System.Text.StringBuilder]::new()
     Add-NspCountTableRow $recallRows "Zurückgerufene Nachrichten durch 32Guards Recall" $current.RecalledMessages $previous.RecalledMessages
@@ -573,27 +622,13 @@ $smtpClient = $null
 try {
     New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
     Write-Host "Reading NoSpamProxy report data through OData..."
-    $reportData = Get-NspODataReportData -BaseUrl $ODataBaseUrl -ApiKey $env:NSP_API_KEY
+    $reportData = Get-NspODataReportData -BaseUrl $ODataBaseUrl -ApiKey $env:NSP_API_KEY -Days $Days
     $currentStart = $reportData.Current.StartUtc.ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
     $currentEnd = $reportData.Current.EndUtc.AddDays(-1).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
     $previousStart = $reportData.Comparison.StartUtc.ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
     $previousEnd = $reportData.Comparison.EndUtc.AddDays(-1).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
 
-    $currentBlocked = Get-NspPeriodBlockTotal $reportData.Current
-    $previousBlocked = Get-NspPeriodBlockTotal $reportData.Comparison
-    $currentPermanent = Get-NspDictionaryCount $reportData.Current.StatusCounts "PermanentlyBlocked"
-    $previousPermanent = Get-NspDictionaryCount $reportData.Comparison.StatusCounts "PermanentlyBlocked"
-    $currentTemporary = Get-NspDictionaryCount $reportData.Current.StatusCounts "TemporarilyBlocked"
-    $previousTemporary = Get-NspDictionaryCount $reportData.Comparison.StatusCounts "TemporarilyBlocked"
-
-    $kpis = @"
-<table class="metrics" role="presentation"><tr>
-  <td class="metric"><span class="value">$(Format-NspCount $reportData.Current.MessageTotal)</span><span class="label">Nachrichtentracks aktuell</span><small>Vergleich: $(Format-NspCount $reportData.Comparison.MessageTotal)</small></td>
-  <td class="metric"><span class="value">$(Format-NspCount $currentPermanent)</span><span class="label">Dauerhaft blockiert</span><small>Vergleich: $(Format-NspCount $previousPermanent)</small></td>
-  <td class="metric"><span class="value">$(Format-NspCount $currentTemporary)</span><span class="label">Temporär blockiert</span><small>Vergleich: $(Format-NspCount $previousTemporary)</small></td>
-  <td class="metric"><span class="value">$(Format-NspCount $currentBlocked)</span><span class="label">Blockierungen gesamt</span><small>Vergleich: $(Format-NspCount $previousBlocked)</small></td>
-</tr></table>
-"@
+    $kpis = New-NspKpiCards $reportData
 
     $templatePath = Join-Path $PSScriptRoot "template.html"
     if (-not (Test-Path -LiteralPath $templatePath)) { throw "Required HTML template not found: template.html" }
