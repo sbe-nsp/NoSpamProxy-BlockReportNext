@@ -1,3 +1,9 @@
+## [0.4.1] - Build 20261127.4 - 2026-11-27
+
+### Behoben
+- Große OData-Ergebnisse werden nicht mehr nach 200 Seiten abgebrochen. Filter- und Aktionsdaten werden seitenweise ausgewertet.
+- Wiederholte Fortsetzungslinks und erkennbare wiederholte Seiten werden weiterhin als Fehler gemeldet, statt einen unvollständigen Bericht zu erzeugen.
+
 ## [0.4.0] - Build 20261127.3 - 2026-11-27
 
 ### Neu

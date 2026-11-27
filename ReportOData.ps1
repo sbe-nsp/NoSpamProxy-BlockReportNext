@@ -223,16 +223,25 @@ function Get-NspODataItems {
     param(
         [Parameter(Mandatory = $true)][string] $Path,
         [System.Collections.IDictionary] $Query,
-        [ValidateRange(1, 500)][int] $PageSize = 500,
-        [ValidateRange(1, 1000)][int] $MaxPages = 200
+        [ValidateRange(1, 500)][int] $PageSize = 500
     )
 
-    $items = [System.Collections.Generic.List[object]]::new()
-    $skip = 0
+    $skip = [long]0
     $nextLink = $null
-    $lastNextLink = $null
+    $seenNextLinks = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $seenPageBoundaries = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $groupKeys = @()
+    $hasGroupBy = $Query -and $Query["`$apply"] -match "groupby\(\(([^)]+)\)"
+    if ($hasGroupBy -and $Query["`$orderby"]) {
+        $keys = @($Matches[1].Split(",") | ForEach-Object { $_.Trim() })
+        $orderKeys = @(([string]$Query["`$orderby"]).Split(",") | ForEach-Object { $_.Trim() })
+        if ($keys.Count -eq $orderKeys.Count -and -not (Compare-Object $keys $orderKeys)) {
+            $groupKeys = $keys
+        }
+    }
+    $checkEntityId = $Query -and -not $hasGroupBy -and $Query["`$orderby"] -match "(^|,)\s*Id(?:\s+(?:asc|desc))?\s*(,|$)"
 
-    for ($pageNumber = 0; $pageNumber -lt $MaxPages; $pageNumber++) {
+    while ($true) {
         if ($nextLink) {
             $page = Invoke-NspODataRequest -Path $nextLink
         }
@@ -250,22 +259,37 @@ function Get-NspODataItems {
             throw "OData response for '$Path' did not contain a value collection."
         }
         $pageItems = @($page.value)
-        foreach ($item in $pageItems) { $items.Add($item) }
+        $boundaryKeys = $groupKeys
+        if ($pageItems.Count -gt 0 -and $checkEntityId -and
+            $null -ne (Get-NspODataProperty $pageItems[0] "Id") -and
+            $null -ne (Get-NspODataProperty $pageItems[-1] "Id")) {
+            $boundaryKeys = @("Id")
+        }
+        if ($pageItems.Count -gt 0 -and $boundaryKeys.Count -gt 0) {
+            $first = [object[]]::new($boundaryKeys.Count)
+            $last = [object[]]::new($boundaryKeys.Count)
+            for ($i = 0; $i -lt $boundaryKeys.Count; $i++) {
+                $first[$i] = Get-NspODataPathValue $pageItems[0] $boundaryKeys[$i]
+                $last[$i] = Get-NspODataPathValue $pageItems[-1] $boundaryKeys[$i]
+            }
+            $boundary = ConvertTo-Json -InputObject ([ordered]@{ First = $first; Last = $last }) -Compress -Depth 10
+            if (-not $seenPageBoundaries.Add($boundary)) {
+                throw "OData pagination for '$Path' repeated a page of ordered results."
+            }
+        }
+        foreach ($item in $pageItems) { Write-Output $item }
         $skip += $pageItems.Count
 
         $nextLink = [string](Get-NspODataProperty $page "@odata.nextLink")
         if ($nextLink) {
-            if ($nextLink -eq $lastNextLink) {
+            if (-not $seenNextLinks.Add($nextLink)) {
                 throw "OData pagination for '$Path' repeated a next link."
             }
-            $lastNextLink = $nextLink
             continue
         }
 
-        if ($pageItems.Count -lt $PageSize) { return $items }
+        if ($pageItems.Count -lt $PageSize) { return }
     }
-
-    throw "OData pagination for '$Path' exceeded $MaxPages pages; the result is incomplete."
 }
 
 function Get-NspODataApplyRows {
@@ -586,7 +610,7 @@ function Get-NspTopSpammers {
         [Parameter(Mandatory = $true)][DateTime] $EndUtc
     )
 
-    $domains = @(Get-NspODataItems -Path "/odata/v4/OwnedDomains" -Query @{ "`$select" = "Name"; "`$orderby" = "Name,Id" })
+    $domains = @(Get-NspODataItems -Path "/odata/v4/OwnedDomains" -Query @{ "`$select" = "Name,Id"; "`$orderby" = "Name,Id" })
     $domainConditions = [System.Collections.Generic.List[string]]::new()
     foreach ($domain in $domains) {
         $name = [string](Get-NspODataProperty $domain "Name")
@@ -640,10 +664,61 @@ function Get-NspODataPeriodReportData {
 
     Write-NspODataProgress "Nachrichten und Blockierungsgründe"
     $summaryRows = @(Get-NspODataApplyRows "/api/message-tracking/MessageTrackSummaries" $summaryApply "Status,RejectReason,WasReceivedFromRelayServer,WasRecalled")
+
+    $actions = @{}
+    $actionUniqueMessages = @{}
+    $actionUnattributedEvents = @{}
     Write-NspODataProgress "Prüfaktionen"
-    $actionRows = @(Get-NspODataApplyRows "/api/message-tracking/Actions" $actionApply "Name,Decision,MessageTrackSummary/MailId")
+    Get-NspODataApplyRows "/api/message-tracking/Actions" $actionApply "Name,Decision,MessageTrackSummary/MailId" | ForEach-Object {
+        $row = $_
+        $name = [string](Get-NspODataProperty $row "Name")
+        $decision = [string](Get-NspODataProperty $row "Decision")
+        if (-not $name) { $name = "(unknown action)" }
+        if (-not $decision) { $decision = "(unknown decision)" }
+        $mailId = [string](Get-NspODataPathValue $row "MessageTrackSummary/MailId")
+        $key = "$name|$decision"
+        $eventCount = Get-NspAggregateCount $row
+        Add-NspCount $actions $key $eventCount
+        if ($mailId) { Add-NspCount $actionUniqueMessages $key 1 }
+        else { Add-NspCount $actionUnattributedEvents $key $eventCount }
+    }
+
+    $filters = @{}
     Write-NspODataProgress "Filtertreffer"
-    $filterRows = @(Get-NspODataApplyRows "/api/message-tracking/Filters" $filterApply "Name,Scl,MessageTrackSummary/MailId")
+    Get-NspODataApplyRows "/api/message-tracking/Filters" $filterApply "Name,Scl,MessageTrackSummary/MailId" | ForEach-Object {
+        $row = $_
+        $name = [string](Get-NspODataProperty $row "Name")
+        if (-not $name) { $name = "(unknown filter)" }
+        $scl = [string](Get-NspODataProperty $row "Scl")
+        if ($null -eq (Get-NspODataProperty $row "Scl")) { $scl = "(null)" }
+        if (-not $filters.ContainsKey($name)) {
+            $filters[$name] = @{
+                Total = [long]0
+                UnattributedEvents = [long]0
+                PositiveScl = [long]0
+                Scl = @{}
+                MessageIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                PositiveMessageIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            }
+        }
+        $count = Get-NspAggregateCount $row
+        $filters[$name].Total += $count
+        Add-NspCount $filters[$name].Scl $scl $count
+        $mailId = [string](Get-NspODataPathValue $row "MessageTrackSummary/MailId")
+        if ($mailId) { [void]$filters[$name].MessageIds.Add($mailId) }
+        else { $filters[$name].UnattributedEvents += $count }
+        $sclNumber = 0.0
+        if ([double]::TryParse($scl, [Globalization.NumberStyles]::Float,
+                [Globalization.CultureInfo]::InvariantCulture, [ref]$sclNumber) -and $sclNumber -gt 0) {
+            $filters[$name].PositiveScl += $count
+            if ($mailId) { [void]$filters[$name].PositiveMessageIds.Add($mailId) }
+        }
+    }
+    foreach ($name in @($filters.Keys)) {
+        $filters[$name].UniqueMessages = [long]$filters[$name].MessageIds.Count
+        $filters[$name].UniquePositiveMessages = [long]$filters[$name].PositiveMessageIds.Count
+    }
+
     Write-NspODataProgress "Anhänge"
     $attachmentRows = @(Get-NspODataApplyRows "/api/message-tracking/Attachments" $attachmentApply "MimeType,MessageTrackSummary/Status,IsQuarantined")
     Write-NspODataProgress "Analyseoperationen"
@@ -678,56 +753,6 @@ function Get-NspODataPeriodReportData {
     foreach ($row in $recallRows) {
         if ([string](Get-NspODataPathValue $row "MailId")) { $recalledCount++ }
         else { $unattributedRecallCount++ }
-    }
-
-    $actions = @{}
-    $actionUniqueMessages = @{}
-    $actionUnattributedEvents = @{}
-    foreach ($row in $actionRows) {
-        $name = [string](Get-NspODataProperty $row "Name")
-        $decision = [string](Get-NspODataProperty $row "Decision")
-        if (-not $name) { $name = "(unknown action)" }
-        if (-not $decision) { $decision = "(unknown decision)" }
-        $mailId = [string](Get-NspODataPathValue $row "MessageTrackSummary/MailId")
-        $key = "$name|$decision"
-        $eventCount = Get-NspAggregateCount $row
-        Add-NspCount $actions $key $eventCount
-        if ($mailId) { Add-NspCount $actionUniqueMessages $key 1 }
-        else { Add-NspCount $actionUnattributedEvents $key $eventCount }
-    }
-
-    $filters = @{}
-    foreach ($row in $filterRows) {
-        $name = [string](Get-NspODataProperty $row "Name")
-        if (-not $name) { $name = "(unknown filter)" }
-        $scl = [string](Get-NspODataProperty $row "Scl")
-        if ($null -eq (Get-NspODataProperty $row "Scl")) { $scl = "(null)" }
-        if (-not $filters.ContainsKey($name)) {
-            $filters[$name] = @{
-                Total = [long]0
-                UnattributedEvents = [long]0
-                PositiveScl = [long]0
-                Scl = @{}
-                MessageIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-                PositiveMessageIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-            }
-        }
-        $count = Get-NspAggregateCount $row
-        $filters[$name].Total += $count
-        Add-NspCount $filters[$name].Scl $scl $count
-        $mailId = [string](Get-NspODataPathValue $row "MessageTrackSummary/MailId")
-        if ($mailId) { [void]$filters[$name].MessageIds.Add($mailId) }
-        else { $filters[$name].UnattributedEvents += $count }
-        $sclNumber = 0.0
-        if ([double]::TryParse($scl, [Globalization.NumberStyles]::Float,
-                [Globalization.CultureInfo]::InvariantCulture, [ref]$sclNumber) -and $sclNumber -gt 0) {
-            $filters[$name].PositiveScl += $count
-            if ($mailId) { [void]$filters[$name].PositiveMessageIds.Add($mailId) }
-        }
-    }
-    foreach ($name in @($filters.Keys)) {
-        $filters[$name].UniqueMessages = [long]$filters[$name].MessageIds.Count
-        $filters[$name].UniquePositiveMessages = [long]$filters[$name].PositiveMessageIds.Count
     }
 
     $attachments = @{}

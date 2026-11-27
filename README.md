@@ -4,19 +4,19 @@
 
 <p align="center">
   <strong>NSP-dark (Standard)</strong><br>
-  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.0/docs/report-preview-nsp-dark.png" alt="NSP-dark: Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.1/docs/report-preview-nsp-dark.png" alt="NSP-dark: Vorschau des NoSpamProxy-Analyseberichts" width="876">
   <br>
   <strong>NSP-light</strong><br>
-  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.0/docs/report-preview-nsp-light.png" alt="NSP-light: Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.1/docs/report-preview-nsp-light.png" alt="NSP-light: Vorschau des NoSpamProxy-Analyseberichts" width="876">
   <br>
   <strong>NSP-Classic</strong><br>
-  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.0/docs/report-preview-nsp-classic.png" alt="NSP-Classic: Vorschau des NoSpamProxy-Analyseberichts" width="876">
+  <img src="https://raw.githubusercontent.com/sbe-nsp/NoSpamProxy-BlockReportNext/v0.4.1/docs/report-preview-nsp-classic.png" alt="NSP-Classic: Vorschau des NoSpamProxy-Analyseberichts" width="876">
   <br>
   <sub>Alle Berichtsvorschauen enthalten ausschließlich fiktive Beispieldaten.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.4.0">Release 0.4.0</a> ·
+  <a href="https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.4.1">Release 0.4.1</a> ·
   <a href="#api-zugang-erstellen">API-Zugang erstellen</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#aufruf">Aufruf</a> ·
@@ -136,6 +136,8 @@ Die MIME-Typen lassen sich im HTML-Bericht einzeln aufklappen und sind zunächst
 
 Die Zeitfilter sind UTC. Bei `-Days 7` umfasst der aktuelle Zeitraum die letzten sieben vollständigen UTC-Tage; der Vergleich umfasst die unmittelbar davorliegenden sieben Tage. Der heutige UTC-Tag ist ausgeschlossen. Allgemein gilt: aktuell `[heute-Days, heute)`, Vergleich `[heute-2×Days, heute-Days)`; Start ist inklusiv, Ende exklusiv.
 
+OData-Ergebnisse werden ohne feste Seitenzahlbegrenzung abgerufen. Filter- und Aktionsdaten werden seitenweise ausgewertet; bei großen Datenmengen können Laufzeit und Speicherbedarf trotzdem deutlich steigen. Wiederholte Fortsetzungslinks oder erkennbare wiederholte Seiten führen zu einem Fehler statt zu einem unvollständigen Bericht.
+
 ## Voraussetzungen
 
 - Windows und PowerShell 5.1 oder neuer.
@@ -149,7 +151,7 @@ Die Zeitfilter sind UTC. Bei `-Days 7` umfasst der aktuelle Zeitraum die letzten
 
 ## Installation
 
-Das [Anwenderpaket 0.4.0](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.4.0/NoSpamProxy-BlockReportNext-v0.4.0-build20261127.3.zip) herunterladen und entpacken. Es enthält die zwei PowerShell-Dateien, alle drei HTML-Vorlagen und die README.
+Das [Anwenderpaket 0.4.1](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/download/v0.4.1/NoSpamProxy-BlockReportNext-v0.4.1-build20261127.4.zip) herunterladen und entpacken. Es enthält die zwei PowerShell-Dateien, alle drei HTML-Vorlagen und die README.
 
 Alternativ den `master`-Branch klonen:
 
@@ -340,4 +342,4 @@ Die API wird ausschließlich mit GET-Abfragen verwendet. API-Antworten und Empf�
 
 ## Version
 
-Aktuelle Version: **0.4.0, Build 20261127.3 vom 27.11.2026**. Die Skriptversion ist im Bericht sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.4.0).
+Aktuelle Version: **0.4.1, Build 20261127.4 vom 27.11.2026**. Die Skriptversion ist im Bericht sichtbar und wird in `Get-PermanentlyBlocked.ps1` gepflegt. Die Patchnotes stehen auf der [Release-Seite](https://github.com/sbe-nsp/NoSpamProxy-BlockReportNext/releases/tag/v0.4.1).
